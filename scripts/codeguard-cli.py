@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from codeguard_v2 import (
+from codeguard import (
     backup_before_modification,
     calculate_hash,
     confirm_modification,

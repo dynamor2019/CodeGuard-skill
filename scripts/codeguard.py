@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+VERSION = "1.0.0"
+
 CODEGUARD_DIR = Path(".codeguard")
 VERSIONS_DIR = CODEGUARD_DIR / "versions"
 TEMP_DIR = CODEGUARD_DIR / "temp"
@@ -493,9 +495,10 @@ def list_versions(file_path: str | Path, project_path: str | Path = ".") -> list
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="codeguard-v2",
+        prog="codeguard",
         description="Project-local snapshot and protection workflow for CodeGuard.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument(
         "--project",
         default=".",

@@ -5,7 +5,7 @@ description: Protect completed or sensitive code from accidental edits by requir
 
 # CodeGuard
 
-Use the project-local workflow by default. Prefer `python scripts/codeguard_v2.py ...` for repository work. `python scripts/codeguard-cli.py ...` is a compatibility command surface that now delegates to the same project-local snapshot model. Use `python cli/codeguard_cli.py ...` only when the user explicitly asks to install or inspect the legacy global CLI.
+Use the project-local workflow by default. Prefer `python scripts/codeguard.py ...` for repository work. `python scripts/codeguard-cli.py ...` is a compatibility command surface that now delegates to the same project-local snapshot model. Use `python cli/codeguard_cli.py ...` only when the user explicitly asks to install or inspect the legacy global CLI.
 
 ## Detect Protection
 
@@ -24,14 +24,14 @@ Treat `[Development]`, `[To Optimize]`, and `[Temporarily Disabled]` as editable
 
 When the requested change overlaps a protected region, follow this sequence:
 
-1. Inspect existing snapshots with `python scripts/codeguard_v2.py list <file>`.
+1. Inspect existing snapshots with `python scripts/codeguard.py list <file>`.
 2. Stop and ask whether the author or owner approved the edit.
 3. Refuse to modify the protected region if approval is not confirmed.
-4. Create a pre-edit backup with `python scripts/codeguard_v2.py backup <file>` after approval is confirmed.
+4. Create a pre-edit backup with `python scripts/codeguard.py backup <file>` after approval is confirmed.
 5. Make the requested change.
 6. Ask whether the feature now works as intended.
-7. Run `python scripts/codeguard_v2.py confirm <file> "<feature>" "<reason>" true` only after the user confirms success.
-8. Skip the permanent record if the user says the feature is still broken, and offer `python scripts/codeguard_v2.py rollback <file> --version N`.
+7. Run `python scripts/codeguard.py confirm <file> "<feature>" "<reason>" true` only after the user confirms success.
+8. Skip the permanent record if the user says the feature is still broken, and offer `python scripts/codeguard.py rollback <file> --version N`.
 
 Do not claim approval, successful verification, or implementation status unless the user explicitly confirms it.
 
@@ -40,7 +40,7 @@ Do not claim approval, successful verification, or implementation status unless 
 When the user says a feature is complete or asks to protect it:
 
 1. Choose a short, stable feature name.
-2. Run `python scripts/codeguard_v2.py add <file> "<feature>"`.
+2. Run `python scripts/codeguard.py add <file> "<feature>"`.
 3. Confirm that the file now has a protection block and a snapshot in `.codeguard/versions/`.
 4. Avoid stacking duplicate protection headers. If the file is already protected, treat the operation as a snapshot refresh.
 
@@ -48,8 +48,8 @@ When the user says a feature is complete or asks to protect it:
 
 Use rollback only after explicit approval because it overwrites the current file state.
 
-- `python scripts/codeguard_v2.py rollback <file> --version N`
-- `python scripts/codeguard_v2.py rollback <file> --feature "<feature>"`
+- `python scripts/codeguard.py rollback <file> --version N`
+- `python scripts/codeguard.py rollback <file> --feature "<feature>"`
 - Add `--yes` only in scripted or test flows where approval already exists.
 
 Explain that rollback also stores the current state as a `.rollback-backup.<timestamp>.bak` file next to the target file.
@@ -58,13 +58,13 @@ Explain that rollback also stores the current state as a `.rollback-backup.<time
 
 | Command | Purpose |
 | --- | --- |
-| `python scripts/codeguard_v2.py init` | Create the `.codeguard/` workspace in the current project |
-| `python scripts/codeguard_v2.py add <file> "<feature>"` | Add or refresh a protection marker and create a snapshot |
-| `python scripts/codeguard_v2.py backup <file>` | Create a pre-modification backup for an approved edit |
-| `python scripts/codeguard_v2.py confirm <file> "<feature>" "<reason>" true` | Promote the current file to a new snapshot and write a permanent record |
-| `python scripts/codeguard_v2.py confirm <file> "<feature>" "<reason>" false` | Leave the temp backup in place and skip the permanent record |
-| `python scripts/codeguard_v2.py list <file>` | Show snapshot history for a file |
-| `python scripts/codeguard_v2.py rollback <file> --version N` | Restore a previous snapshot |
+| `python scripts/codeguard.py init` | Create the `.codeguard/` workspace in the current project |
+| `python scripts/codeguard.py add <file> "<feature>"` | Add or refresh a protection marker and create a snapshot |
+| `python scripts/codeguard.py backup <file>` | Create a pre-modification backup for an approved edit |
+| `python scripts/codeguard.py confirm <file> "<feature>" "<reason>" true` | Promote the current file to a new snapshot and write a permanent record |
+| `python scripts/codeguard.py confirm <file> "<feature>" "<reason>" false` | Leave the temp backup in place and skip the permanent record |
+| `python scripts/codeguard.py list <file>` | Show snapshot history for a file |
+| `python scripts/codeguard.py rollback <file> --version N` | Restore a previous snapshot |
 
 ## Project Files
 

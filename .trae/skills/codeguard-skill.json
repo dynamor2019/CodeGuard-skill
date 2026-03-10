@@ -32,8 +32,7 @@
   "files": {
     "skill_prompt": "SKILL.md",
     "agents_config": "agents/openai.yaml",
-    "cli_tool": "scripts/codeguard_v2.py",
-    "cli_wrapper": "scripts/codeguard-v2.py",
+    "cli_tool": "scripts/codeguard.py",
     "legacy_cli_tool": "scripts/codeguard-cli.py"
   },
   "settings": {

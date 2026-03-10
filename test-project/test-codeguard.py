@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from codeguard_v2 import (  # noqa: E402
+from codeguard import (  # noqa: E402
     backup_before_modification,
     calculate_hash,
     check_conflict,
@@ -24,7 +24,7 @@ from codeguard_v2 import (  # noqa: E402
 )
 
 
-class CodeGuardV2Tests(unittest.TestCase):
+class CodeGuardTests(unittest.TestCase):
     def test_init_creates_expected_layout(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cg_path = init_codeguard(tmpdir)
@@ -180,7 +180,7 @@ class CodeGuardV2Tests(unittest.TestCase):
             create_version_snapshot(target, "Feature 1", tmpdir)
             backup_before_modification(target, tmpdir)
             target.write_text(target.read_text(encoding="utf-8") + "Version 2\n", encoding="utf-8")
-            confirm_modification(target, "Feature 1", "Promote v2", True, tmpdir)
+            confirm_modification(target, "Feature 1", "Promote current snapshot", True, tmpdir)
 
             versions = list_versions(target, tmpdir)
             self.assertEqual(len(versions), 2)

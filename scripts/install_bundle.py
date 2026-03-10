@@ -16,8 +16,7 @@ SKILL_BUNDLE_FILES = [
     Path("agents/openai.yaml"),
     Path("README.md"),
     Path("LICENSE"),
-    Path("scripts/codeguard_v2.py"),
-    Path("scripts/codeguard-v2.py"),
+    Path("scripts/codeguard.py"),
     Path("scripts/codeguard-cli.py"),
 ]
 

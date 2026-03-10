@@ -30,7 +30,7 @@ triggers:
 
 cli:
   command: python
-  script: scripts/codeguard_v2.py
+  script: scripts/codeguard.py
   legacy_script: scripts/codeguard-cli.py
 
 capabilities:

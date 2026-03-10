@@ -20,8 +20,7 @@ $bundleFiles = @(
     "README.md",
     "LICENSE",
     "agents\openai.yaml",
-    "scripts\codeguard_v2.py",
-    "scripts\codeguard-v2.py",
+    "scripts\codeguard.py",
     "scripts\codeguard-cli.py"
 )
 
