@@ -1,0 +1,33 @@
+# Project-local CodeGuard state
+.codeguard/
+.codeguard-attempts.json
+.codeguard-locks.json
+.codeguard-ai-traces.json
+codeguard-records.md
+
+# Generated backups
+*.rollback-backup.*.bak
+*.pre-modification.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

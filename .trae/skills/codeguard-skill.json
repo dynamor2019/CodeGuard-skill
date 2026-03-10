@@ -1,0 +1,54 @@
+{
+  "name": "codeguard-skill",
+  "version": "1.0.0",
+  "type": "global",
+  "enabled": true,
+  "priority": 100,
+  "author": "CodeGuard Team",
+  "license": "MIT",
+  "description": {
+    "en": "Protect completed or sensitive code from risky edits by requiring approval, creating project-local snapshots, and recording only successful modifications.",
+    "zh": "通过审批确认、项目内快照和成功记录机制，保护已完成或敏感代码不被误改。"
+  },
+  "triggers": {
+    "keywords": [
+      "feature protection",
+      "completed feature",
+      "do not modify",
+      "modification approval",
+      "protect code",
+      "codeguard"
+    ],
+    "patterns": [
+      "// Feature Protection:",
+      "# Feature Protection:",
+      "/* Feature Protection:",
+      "[Completed]",
+      "[Verified]",
+      "[Stable]",
+      "[CodeGuard Protection]"
+    ]
+  },
+  "files": {
+    "skill_prompt": "SKILL.md",
+    "agents_config": "agents/openai.yaml",
+    "cli_tool": "scripts/codeguard_v2.py",
+    "cli_wrapper": "scripts/codeguard-v2.py",
+    "legacy_cli_tool": "scripts/codeguard-cli.py"
+  },
+  "settings": {
+    "require_confirmation": true,
+    "record_success_only": true,
+    "project_local_state_dir": ".codeguard"
+  },
+  "metadata": {
+    "category": "code-protection",
+    "updated_at": "2026-03-09",
+    "tags": [
+      "code-protection",
+      "feature-protection",
+      "snapshots",
+      "rollback"
+    ]
+  }
+}
