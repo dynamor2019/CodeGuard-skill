@@ -1,61 +1,65 @@
 name: codeguard-skill
-version: 1.0.0
+version: 1.2.0
 description: >
-  Canonical metadata for the CodeGuard skill bundle. Aligns external packaging
-  files with SKILL.md, agents/openai.yaml, and the project-local snapshot CLI.
+  Canonical metadata for the CodeGuard skill bundle. Aligns packaging files
+  with the local-first workflow: user-confirmed success, manual important
+  snapshots, mandatory feature indexes for files over 200 lines, and
+  project-local rollback.
 author: CodeGuard Team
 license: MIT
 
 keywords:
-  - code protection
-  - feature protection
-  - approval workflow
-  - snapshots
+  - codeguard
+  - local version protection
+  - feature index
+  - vibe coding
   - rollback
 
 triggers:
   keywords:
-    - feature protection
-    - completed feature
-    - do not modify
-    - modification approval
     - codeguard
+    - feature index
+    - local version control
+    - protect code
+    - snapshot
+    - rollback
   patterns:
-    - // Feature Protection:
-    - "# Feature Protection:"
-    - /* Feature Protection:
-    - "[Completed]"
-    - "[Verified]"
-    - "[Stable]"
     - "[CodeGuard Protection]"
+    - "[CodeGuard Feature Index]"
+    - "[/CodeGuard Feature Index]"
+    - "Feature Protection:"
 
 capabilities:
   - detect-protected-regions
-  - require-approval-before-edit
-  - snapshot-protected-files
-  - rollback-previous-snapshots
-  - record-successful-modifications
+  - require-user-confirmed-success
+  - require-large-file-feature-indexes
+  - create-manual-important-snapshots
+  - rollback-project-local-state
+  - reduce-large-file-token-usage
 
 files:
   skill_prompt: SKILL.md
   agents_config: agents/openai.yaml
   cli_tool: scripts/codeguard.py
   legacy_cli_tool: scripts/codeguard-cli.py
+  global_launcher: cli/codeguard_cli.py
   trae_registry: .trae/skills/codeguard-skill.json
 
 security:
   require_confirmation: true
   record_success_only: true
+  require_index_authorization: true
+  feature_index_threshold: 200
   project_local_state_dir: .codeguard
   rollback_backup_pattern: "*.rollback-backup.*.bak"
 
 metadata:
   created_at: "2026-03-01"
-  updated_at: "2026-03-09"
+  updated_at: "2026-03-10"
   category: code-protection
   tags:
     - code-protection
-    - feature-protection
-    - ai-ide
-    - snapshots
+    - feature-index
+    - local-workflow
+    - vibe-coding
     - rollback

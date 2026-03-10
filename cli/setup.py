@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Packaging metadata for the legacy global CodeGuard CLI."""
+"""Packaging metadata for the CodeGuard global launcher."""
 
 from pathlib import Path
 
@@ -10,9 +10,9 @@ long_description = (ROOT / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="codeguard-cli",
-    version="1.0.0",
+    version="1.2.0",
     author="CodeGuard Team",
-    description="Global CLI tool for CodeGuard code protection",
+    description="Global launcher for the local-first CodeGuard workflow",
     long_description=long_description,
     long_description_content_type="text/markdown",
     py_modules=["codeguard_cli"],

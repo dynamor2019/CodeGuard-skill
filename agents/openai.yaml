@@ -1,4 +1,4 @@
 interface:
   display_name: "CodeGuard"
-  short_description: "Protect completed code from risky edits"
-  default_prompt: "Use $codeguard-skill to protect completed code and gate risky edits."
+  short_description: "Local version protection and feature indexing for AI coding"
+  default_prompt: "Use $codeguard-skill to protect accepted code locally, require feature indexes for files over 200 lines, record success only after user confirmation, and create manual milestone snapshots only when the user marks a state as important."

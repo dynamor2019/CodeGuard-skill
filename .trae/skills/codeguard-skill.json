@@ -1,52 +1,54 @@
 {
   "name": "codeguard-skill",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "type": "global",
   "enabled": true,
   "priority": 100,
   "author": "CodeGuard Team",
   "license": "MIT",
   "description": {
-    "en": "Protect completed or sensitive code from risky edits by requiring approval, creating project-local snapshots, and recording only successful modifications.",
-    "zh": "通过审批确认、项目内快照和成功记录机制，保护已完成或敏感代码不被误改。"
+    "en": "Local AI-friendly version protection and feature indexing for vibe-coding beginners. Require user-confirmed success, mandatory indexes for files over 200 lines, and manual important snapshots.",
+    "zh": "面向 vibe coding 初学者的本地 AI 版本保护与功能索引工具。成功必须由用户确认，超过 200 行的大文件必须建立索引，重要版本只通过手动快照保存。"
   },
   "triggers": {
     "keywords": [
-      "feature protection",
-      "completed feature",
-      "do not modify",
-      "modification approval",
-      "protect code",
-      "codeguard"
+      "codeguard",
+      "feature index",
+      "local version control",
+      "snapshot",
+      "rollback",
+      "protect code"
     ],
     "patterns": [
-      "// Feature Protection:",
-      "# Feature Protection:",
-      "/* Feature Protection:",
-      "[Completed]",
-      "[Verified]",
-      "[Stable]",
-      "[CodeGuard Protection]"
+      "[CodeGuard Protection]",
+      "[CodeGuard Feature Index]",
+      "[/CodeGuard Feature Index]",
+      "Feature Protection:"
     ]
   },
   "files": {
     "skill_prompt": "SKILL.md",
     "agents_config": "agents/openai.yaml",
     "cli_tool": "scripts/codeguard.py",
-    "legacy_cli_tool": "scripts/codeguard-cli.py"
+    "legacy_cli_tool": "scripts/codeguard-cli.py",
+    "global_launcher": "cli/codeguard_cli.py"
   },
   "settings": {
     "require_confirmation": true,
     "record_success_only": true,
+    "manual_important_snapshots": true,
+    "require_index_authorization": true,
+    "feature_index_threshold": 200,
     "project_local_state_dir": ".codeguard"
   },
   "metadata": {
     "category": "code-protection",
-    "updated_at": "2026-03-09",
+    "updated_at": "2026-03-10",
     "tags": [
       "code-protection",
-      "feature-protection",
-      "snapshots",
+      "feature-index",
+      "local-workflow",
+      "vibe-coding",
       "rollback"
     ]
   }

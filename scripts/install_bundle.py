@@ -152,7 +152,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--install-cli",
         action="store_true",
-        help="Also install the legacy global CLI launcher.",
+        help="Also install the global CodeGuard launcher.",
     )
     parser.add_argument(
         "--trae-registry",

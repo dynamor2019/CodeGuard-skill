@@ -1,9 +1,5 @@
 # Project-local CodeGuard state
 .codeguard/
-.codeguard-attempts.json
-.codeguard-locks.json
-.codeguard-ai-traces.json
-codeguard-records.md
 
 # Generated backups
 *.rollback-backup.*.bak

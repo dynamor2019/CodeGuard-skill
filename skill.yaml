@@ -1,8 +1,10 @@
 name: codeguard-skill
-version: 1.0.0
+version: 1.2.0
 description: >
-  Protect completed or sensitive code from risky edits by requiring approval,
-  creating project-local snapshots, and recording only successful changes.
+  Local AI-friendly version protection and feature indexing for vibe-coding
+  beginners. Require user-confirmed success, mandatory feature indexes for
+  files over 200 lines, manual important snapshots, and project-local rollback
+  without depending on Git or network access.
 author: CodeGuard Team
 license: MIT
 type: skill
@@ -13,20 +15,18 @@ prompt: SKILL.md
 
 triggers:
   keywords:
-    - feature protection
-    - completed feature
-    - do not modify
-    - modification approval
-    - protect code
     - codeguard
+    - feature index
+    - local version control
+    - snapshot
+    - rollback
+    - protect code
+    - large file
   patterns:
-    - // Feature Protection:
-    - "# Feature Protection:"
-    - /* Feature Protection:
-    - "[Completed]"
-    - "[Verified]"
-    - "[Stable]"
     - "[CodeGuard Protection]"
+    - "[CodeGuard Feature Index]"
+    - "[/CodeGuard Feature Index]"
+    - "Feature Protection:"
 
 cli:
   command: python
@@ -34,23 +34,28 @@ cli:
   legacy_script: scripts/codeguard-cli.py
 
 capabilities:
-  - code-protection
-  - snapshot-management
-  - approval-workflow
+  - local-version-protection
+  - feature-indexing
+  - manual-snapshots
+  - success-confirmation
   - rollback
-  - modification-recording
+  - token-efficiency
 
 settings:
   require_confirmation: true
   record_success_only: true
+  manual_important_snapshots: true
+  require_index_authorization: true
+  feature_index_threshold: 200
   project_local_state_dir: .codeguard
 
 metadata:
   created_at: "2026-03-01"
-  updated_at: "2026-03-09"
+  updated_at: "2026-03-10"
   category: code-protection
   tags:
     - code-protection
-    - feature-protection
-    - ai-ide
-    - snapshots
+    - feature-index
+    - local-workflow
+    - vibe-coding
+    - rollback

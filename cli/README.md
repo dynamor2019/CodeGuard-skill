@@ -1,8 +1,10 @@
-# CodeGuard Global CLI
+# CodeGuard Global Launcher
 
-This folder contains the legacy global `codeguard` launcher. It can still be useful for older editor integrations, but the preferred repository workflow is the project-local snapshot tool in `scripts/codeguard.py`.
+This folder contains the global `codeguard` launcher.
+It is not a second implementation. Its job is to forward project commands to the local official script at `scripts/codeguard.py`.
 
-这个目录包含旧版全局 `codeguard` 启动器。它仍然适合旧编辑器集成，但仓库内推荐的工作方式已经统一为 `scripts/codeguard.py`。
+这个目录包含全局 `codeguard` 启动器。
+它不是第二套实现，它的作用只是把项目命令转发给项目内的官方脚本 `scripts/codeguard.py`。
 
 ## Install
 
@@ -12,40 +14,72 @@ Requires Python 3.10 or newer.
 
 ```bash
 # Install the skill bundle into detected IDE skill folders
-# 安装技能包到检测到的 IDE 技能目录
 python install.py
 
-# Install the bundle and the global CLI launcher
-# 同时安装技能包和全局 CLI 启动器
+# Install the bundle and the global launcher
 python install.py --install-cli
 ```
 
-On Windows the launcher is installed into `%USERPROFILE%\.codeguard\bin`. On macOS and Linux it is installed into `~/.local/bin`.
-
-在 Windows 上，启动器会安装到 `%USERPROFILE%\.codeguard\bin`。在 macOS 和 Linux 上，会安装到 `~/.local/bin`。
-
-## Global CLI Commands
-
 ```bash
-codeguard add src/auth.js userAuth
-codeguard check src/auth.js
-codeguard analyze src/app.js
-codeguard index src/app.js
-codeguard status
+# 安装技能包到检测到的 IDE 技能目录
+python install.py
+
+# 同时安装技能包和全局启动器
+python install.py --install-cli
 ```
 
-## Preferred Alternative
+On Windows the launcher is installed into `%USERPROFILE%\.codeguard\bin`.
+On macOS and Linux it is installed into `~/.local/bin`.
 
-For repository work, use:
+在 Windows 上，启动器会安装到 `%USERPROFILE%\.codeguard\bin`。
+在 macOS 和 Linux 上，会安装到 `~/.local/bin`。
 
-对于仓库内开发，推荐使用：
+## Supported Commands
 
-```bash
-python ../scripts/codeguard.py add src/auth.js "User Authentication"
-python ../scripts/codeguard.py backup src/auth.js
-python ../scripts/codeguard.py confirm src/auth.js "User Authentication" "Fix token refresh bug" true
-```
+Global command:
 
-If you still need the older repository-local command surface, `../scripts/codeguard-cli.py` now shares the same snapshot core and supports commands such as `add`, `backup`, `record`, `confirm`, `list`, and `rollback`.
+- `codeguard status`
 
-如果你仍然需要旧的仓库内命令面，`../scripts/codeguard-cli.py` 现在也复用了同一套快照核心，支持 `add`、`backup`、`record`、`confirm`、`list` 和 `rollback` 等命令。
+Forwarded project-local commands:
+
+- `codeguard init`
+- `codeguard add`
+- `codeguard index`
+- `codeguard show-index`
+- `codeguard validate-index`
+- `codeguard backup`
+- `codeguard confirm`
+- `codeguard snapshot`
+- `codeguard rollback`
+- `codeguard list`
+
+支持的命令：
+
+全局命令：
+
+- `codeguard status`
+
+会转发到项目内官方脚本的命令：
+
+- `codeguard init`
+- `codeguard add`
+- `codeguard index`
+- `codeguard show-index`
+- `codeguard validate-index`
+- `codeguard backup`
+- `codeguard confirm`
+- `codeguard snapshot`
+- `codeguard rollback`
+- `codeguard list`
+
+## Notes
+
+- Run the launcher inside a project that already contains the CodeGuard bundle.
+- For files over 200 lines, create or update the feature index only after the user authorizes it.
+- Success still depends on explicit user confirmation, not on tests alone.
+
+补充说明：
+
+- 请在已经包含 CodeGuard 技能包的项目内使用这个启动器。
+- 对超过 200 行的文件，只有在用户授权后才能创建或更新功能索引。
+- 成功仍然只以用户明确确认作为准绳，不能仅靠测试结果判断。
