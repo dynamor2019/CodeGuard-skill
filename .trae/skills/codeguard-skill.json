@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "codeguard-skill",
   "version": "1.4.0",
   "type": "global",
@@ -8,7 +8,7 @@
   "license": "MIT",
   "description": {
     "en": "Local AI-friendly version protection and feature indexing for vibe-coding beginners. Require user-confirmed success, mandatory indexes for files over 200 lines, and manual important snapshots.",
-    "zh": "闈㈠悜 vibe coding 鍒濆鑰呯殑鏈湴 AI 鐗堟湰淇濇姢涓庡姛鑳界储寮曞伐鍏枫€傛垚鍔熷繀椤荤敱鐢ㄦ埛纭锛岃秴杩?200 琛岀殑澶ф枃浠跺繀椤诲缓绔嬬储寮曪紝閲嶈鐗堟湰鍙€氳繃鎵嬪姩蹇収淇濆瓨銆?
+    "zh": "面向 vibe coding 初学者的本地 AI 版本保护与功能索引工具。成功必须由用户确认，超过 200 行的大文件必须建立索引，重要版本只通过手动快照保存。"
   },
   "triggers": {
     "keywords": [
@@ -53,5 +53,3 @@
     ]
   }
 }
-
-
