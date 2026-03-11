@@ -1,8 +1,9 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Regression tests for the project-local CodeGuard workflow."""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -22,12 +23,15 @@ from codeguard import (  # noqa: E402
     create_version_snapshot,
     get_current_state,
     get_feature_index,
+    get_sidecar_index_path,
     get_temp_backup_path,
     init_codeguard,
     is_index_required,
     list_versions,
     load_index,
     rollback,
+    run_doctor,
+    show_status,
     validate_feature_index,
 )
 
@@ -233,6 +237,280 @@ class CodeGuardTests(unittest.TestCase):
             self.assertIn("two/same.js", index["versions"])
             self.assertNotEqual(first_snapshot["backup_path"], second_snapshot["backup_path"])
 
+    def test_large_json_uses_sidecar_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "large.json")
+            payload_lines = ["{"]
+            for i in range(1, 240):
+                suffix = "," if i < 239 else ""
+                payload_lines.append(f'  "k{i}": {i}{suffix}')
+            payload_lines.append("}")
+            target.write_text("\n".join(payload_lines) + "\n", encoding="utf-8")
+
+            applied = apply_feature_index(
+                target,
+                [("Configuration root", 1), ("Generated keys", 10)],
+                tmpdir,
+            )
+            self.assertIsNotNone(applied)
+
+            sidecar = get_sidecar_index_path(target, tmpdir)
+            self.assertTrue(sidecar.exists())
+            self.assertTrue(validate_feature_index(target, tmpdir, quiet=True))
+            snapshot = create_version_snapshot(target, "JSON Feature", tmpdir)
+            self.assertIsNotNone(snapshot)
+
+    def test_doctor_reports_and_repairs_last_version_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "sample.py")
+            target.write_text("print('ok')\n", encoding="utf-8")
+            create_version_snapshot(target, "Sample", tmpdir)
+
+            index_path = Path(tmpdir, ".codeguard", "index.json")
+            data = load_index(tmpdir)
+            data["last_version"]["sample.py"] = 999
+            index_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+            healthy_before = run_doctor(tmpdir, repair=False)
+            self.assertTrue(healthy_before)
+
+            run_doctor(tmpdir, repair=True)
+            repaired = load_index(tmpdir)
+            self.assertEqual(repaired["last_version"]["sample.py"], 1)
+
+    def test_status_command_runs_for_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "sample.txt")
+            target.write_text("content\n", encoding="utf-8")
+            create_version_snapshot(target, "Sample", tmpdir)
+            self.assertTrue(show_status(target, tmpdir))
+
+    def test_doctor_json_output_is_machine_readable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "doctor",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIn("healthy", payload)
+            self.assertIn("errors", payload)
+            self.assertIn("warnings", payload)
+            self.assertEqual(payload["schema_version"], "1.0")
+            self.assertEqual(payload["report_type"], "doctor")
+
+    def test_status_json_output_is_machine_readable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "sample.py")
+            target.write_text("print('ok')\n", encoding="utf-8")
+            create_version_snapshot(target, "Sample", tmpdir)
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "status",
+                    str(target),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["file_key"], "sample.py")
+            self.assertEqual(payload["schema_version"], "1.0")
+            self.assertEqual(payload["report_type"], "status")
+
+    def test_batch_json_output_includes_results(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir, "one.py")
+            second = Path(tmpdir, "two.py")
+            first.write_text("print('one')\n", encoding="utf-8")
+            second.write_text("print('two')\n", encoding="utf-8")
+            create_version_snapshot(first, "One", tmpdir)
+            create_version_snapshot(second, "Two", tmpdir)
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "batch",
+                    "status",
+                    str(first),
+                    str(second),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["result_count"], 2)
+            self.assertEqual(payload["schema_version"], "1.0")
+            self.assertEqual(payload["report_type"], "batch")
+            self.assertFalse(payload["stopped_early"])
+
+    def test_batch_fail_fast_stops_after_first_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir, "exists.py")
+            first.write_text("print('ok')\n", encoding="utf-8")
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "batch",
+                    "status",
+                    str(first),
+                    str(Path(tmpdir, "missing.py")),
+                    str(Path(tmpdir, "later.py")),
+                    "--fail-fast",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["result_count"], 2)
+            self.assertFalse(payload["ok"])
+            self.assertTrue(payload["stopped_early"])
+            self.assertEqual(payload["schema_version"], "1.0")
+
+    def test_status_json_compact_is_single_line(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "sample.py")
+            target.write_text("print('ok')\\n", encoding="utf-8")
+            create_version_snapshot(target, "Sample", tmpdir)
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "status",
+                    str(target),
+                    "--json",
+                    "--json-compact",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(result.stdout.strip().splitlines()), 1)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["report_type"], "status")
+
+    def test_schema_command_reports_required_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "schema",
+                    "doctor",
+                    "--json-compact",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["report_type"], "schema")
+            self.assertEqual(payload["target"], "doctor")
+            self.assertIn("required_fields", payload["schema"])
+            self.assertIn("healthy", payload["schema"]["required_fields"])
+
+    def test_compatibility_cli_supports_schema_and_compact_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cli_path = Path(__file__).resolve().parents[1] / "scripts" / "codeguard-cli.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(cli_path),
+                    "--project",
+                    tmpdir,
+                    "schema",
+                    "status",
+                    "--json-compact",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(result.stdout.strip().splitlines()), 1)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["report_type"], "schema")
+            self.assertEqual(payload["target"], "status")
+
+    def test_validate_index_warns_on_semantic_signature_drift(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "large.py")
+            write_large_python_file(target)
+
+            applied = apply_feature_index(
+                target,
+                [("Workflow entry", 3), ("State updates", 6), ("Generated data", 25)],
+                tmpdir,
+            )
+            self.assertIsNotNone(applied)
+
+            resolved = dict(get_feature_index(target, tmpdir))
+            drift_line = resolved["Generated data"]
+            lines = target.read_text(encoding="utf-8").splitlines()
+            lines[drift_line - 1] = "value_semantic_drift = 'semantic drift marker'"
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "validate-index",
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("semantic signature changed", result.stdout)
+
     def test_legacy_protection_marker_is_not_wrapped_with_duplicate_header(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir, "legacy.html")
@@ -425,3 +703,4 @@ class CodeGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

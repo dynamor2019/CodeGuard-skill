@@ -1,4 +1,4 @@
----
+﻿---
 name: codeguard-skill
 description: Guide Codex through CodeGuard's local version protection and feature indexing workflow. Use when the user wants to protect completed code, work without Git or network access, require mandatory feature indexes for files over 200 lines, confirm success only after the user verbally approves it, create manual milestone snapshots, or roll back to a project-local snapshot.
 ---
@@ -19,12 +19,15 @@ Use `python cli/codeguard_cli.py ...` only when the user explicitly needs a glob
 6. Keep feature labels short and readable. Use a brief feature phrase, not a paragraph, function list, or change log.
 7. Use the feature index to target the relevant code block. Do not re-read or rewrite unrelated large sections when the index already identifies the needed area.
 8. Keep failure states out of the permanent record. If the user does not confirm success, do not call `confirm` and do not create a milestone snapshot.
+9. For file types that cannot safely host comments (for example JSON/YAML/TOML), use sidecar index files (`<file>.codeguard-index.json`) instead of writing inline blocks.
+10. For metadata incidents or drift, run `doctor` before manual cleanup. Prefer automatic safe repair over ad-hoc edits to `index.json`.
 
 ## Feature Index Format
 
 For large files, place the index near the top of the file using the file's comment style.
+For non-comment-friendly files, maintain a sidecar index file.
 
-Example:
+Inline example:
 
 ```python
 # [CodeGuard Feature Index]
@@ -34,9 +37,24 @@ Example:
 # [/CodeGuard Feature Index]
 ```
 
+Sidecar example (`config.json.codeguard-index.json`):
+
+```json
+{
+  "file": "config.json",
+  "updated_at": "2026-03-10T12:00:00",
+  "line_count": 420,
+  "file_hash": "...",
+  "entries": [
+    {"feature": "Model routing", "line": 35},
+    {"feature": "Retry policy", "line": 96}
+  ]
+}
+```
+
 Rules for entries:
 
-- Use `- <feature label> -> line <number>`.
+- Use `- <feature label> -> line <number>` (inline) or `{"feature": "...", "line": N}` (sidecar).
 - Point to the start line of the code block that implements that feature.
 - Describe a user-meaningful feature block, not just a single function name.
 - Keep labels short enough to scan quickly.
@@ -56,6 +74,18 @@ When the user asks to edit a file:
 8. Run `python scripts/codeguard.py confirm <file> "<feature>" "<reason>" true` only after the user explicitly confirms success.
 9. If the user says the state is important, run `python scripts/codeguard.py snapshot <file> "<feature>" "<reason>"`.
 10. If the user says the change failed, do not confirm it. Offer inspection, further fixes, or `rollback`.
+
+## Observability and Recovery
+
+Use these commands proactively during troubleshooting and bulk edits:
+
+- `python scripts/codeguard.py status <file>`: one-shot health view (protection marker, accepted state, index health, latest snapshot, rollback readiness).\n- `python scripts/codeguard.py status <file> --json`: machine-readable file health output for scripts and CI checks. JSON payload now includes `schema_version`, `report_type`, and `generated_at` as stable metadata.
+- `python scripts/codeguard.py list <file>`: snapshot history with backup existence and accepted state summary.
+- `python scripts/codeguard.py doctor`: project-wide metadata and snapshot/index integrity scan.
+- `python scripts/codeguard.py doctor --repair`: safe metadata repair (schema normalization and `last_version` mismatch fix).\n- `python scripts/codeguard.py doctor --json`: machine-readable project health report for automation/integration.
+- `python scripts/codeguard.py batch validate-index <file1> <file2> ...`: batch validation.
+- `python scripts/codeguard.py batch backup <file1> <file2> ...`: batch backup.
+- `python scripts/codeguard.py batch status <file1> <file2> ...`: batch status checks.
 
 ## Protect Completed Code
 
@@ -82,22 +112,26 @@ Explain that rollback also creates a `.rollback-backup.<timestamp>.bak` file nex
 | --- | --- |
 | `python scripts/codeguard.py init` | Create `.codeguard/` state in the current project |
 | `python scripts/codeguard.py add <file> "<feature>"` | Add or refresh a protection marker and create the initial important snapshot |
-| `python scripts/codeguard.py index <file> --entry "Feature:Line"` | Create or update the feature index |
+| `python scripts/codeguard.py index <file> --entry "Feature:Line"` | Create or update the feature index (inline or sidecar) |
 | `python scripts/codeguard.py show-index <file>` | Show the current feature index |
 | `python scripts/codeguard.py validate-index <file>` | Validate the current feature index and the over-200-lines rule |
 | `python scripts/codeguard.py backup <file>` | Create a pre-modification backup |
 | `python scripts/codeguard.py confirm <file> "<feature>" "<reason>" true` | Record a user-confirmed success without creating a milestone snapshot |
 | `python scripts/codeguard.py snapshot <file> "<feature>" "<reason>"` | Create a user-marked important snapshot |
-| `python scripts/codeguard.py list <file>` | List important snapshots for a file |
+| `python scripts/codeguard.py list <file>` | List important snapshots plus accepted-state metadata |
+| `python scripts/codeguard.py status <file>` | Show protection/index/snapshot/rollback status in one command |
+| `python scripts/codeguard.py doctor [--repair]` | Diagnose or repair metadata/snapshot consistency |
+| `python scripts/codeguard.py batch <action> <files...>` | Run validate-index, backup, or status in batch mode |
 | `python scripts/codeguard.py rollback <file> --version N` | Restore a previous important snapshot |
 
 ## Project Files
 
 Store project-local state here:
 
-- `.codeguard/index.json`: snapshot history and accepted current-state metadata keyed by project-relative file path
-- `.codeguard/versions/`: important milestone snapshots
-- `.codeguard/temp/`: pre-modification backups
-- `.codeguard/records/modifications.md`: user-confirmed success records only
+- `.codeguard/index.json`: snapshot history, accepted current state, protected features, and index freshness metadata.
+- `.codeguard/index.lock`: lock file used for safe concurrent index writes.
+- `.codeguard/versions/`: important milestone snapshots.
+- `.codeguard/temp/`: pre-modification backups.
+- `.codeguard/records/modifications.md`: user-confirmed success records only.
 
 Ignore `.codeguard/` in version control unless the user explicitly wants the metadata committed.

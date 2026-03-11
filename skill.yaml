@@ -1,5 +1,5 @@
-name: codeguard-skill
-version: 1.2.0
+﻿name: codeguard-skill
+version: 1.4.0
 description: >
   Local AI-friendly version protection and feature indexing for vibe-coding
   beginners. Require user-confirmed success, mandatory feature indexes for
@@ -40,6 +40,9 @@ capabilities:
   - success-confirmation
   - rollback
   - token-efficiency
+  - sidecar-indexing
+  - metadata-doctor
+  - batch-operations
 
 settings:
   require_confirmation: true
@@ -59,3 +62,4 @@ metadata:
     - local-workflow
     - vibe-coding
     - rollback
+

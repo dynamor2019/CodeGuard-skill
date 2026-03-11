@@ -1,5 +1,5 @@
-name: codeguard-skill
-version: 1.2.0
+﻿name: codeguard-skill
+version: 1.4.0
 description: >
   Canonical metadata for the CodeGuard skill bundle. Aligns packaging files
   with the local-first workflow: user-confirmed success, manual important
@@ -36,6 +36,9 @@ capabilities:
   - create-manual-important-snapshots
   - rollback-project-local-state
   - reduce-large-file-token-usage
+  - support-sidecar-indexes
+  - run-doctor-repair
+  - batch-workflow
 
 files:
   skill_prompt: SKILL.md
@@ -63,3 +66,4 @@ metadata:
     - local-workflow
     - vibe-coding
     - rollback
+

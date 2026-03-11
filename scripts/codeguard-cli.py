@@ -29,6 +29,10 @@ from codeguard import (
     show_feature_index,
     validate_feature_index,
     apply_feature_index,
+    batch_run,
+    run_doctor,
+    show_status as core_show_status,
+    show_schema,
 )
 
 
@@ -47,41 +51,8 @@ def compatibility_reason(value: str | None) -> str:
     return stripped or DEFAULT_CONFIRM_REASON
 
 
-def show_status(file_path: str, project_path: str | Path = ".") -> bool:
-    project_root = normalize_project_path(project_path)
-    target = resolve_file_path(file_path, project_root)
-    if not target.exists():
-        print(f"File not found: {target.as_posix()}")
-        return False
-
-    content = target.read_text(encoding="utf-8")
-    marker_present = has_codeguard_marker(content) or has_protection_marker(content)
-    entries = get_feature_index(target, project_root)
-    index_required = is_index_required(target, project_root)
-    index_valid = validate_feature_index(target, project_root, quiet=True)
-    current_state = get_current_state(target, project_root)
-    latest_snapshot = get_latest_snapshot(target, project_root)
-
-    print(f"CodeGuard status for: {get_file_key(target, project_root)}")
-    print(f"  Protection marker: {'yes' if marker_present else 'no'}")
-    print(f"  Feature index required: {'yes' if index_required else 'no'}")
-    print(f"  Feature index valid: {'yes' if index_valid else 'no'}")
-    print(f"  Feature index entries: {len(entries)}")
-    if current_state is None:
-        print("  Current state: none recorded")
-    else:
-        print(
-            f"  Current state: {current_state.get('source', 'unknown')} at "
-            f"{current_state.get('timestamp', 'unknown')}"
-        )
-    if latest_snapshot is None:
-        print("  Latest snapshot: none")
-    else:
-        print(
-            f"  Latest snapshot: v{latest_snapshot['version']} "
-            f"({latest_snapshot['feature']})"
-        )
-    return True
+def show_status(file_path: str, project_path: str | Path = ".", *, json_output: bool = False, json_compact: bool = False) -> bool:
+    return core_show_status(file_path, project_path, json_output=json_output, json_compact=json_compact)
 
 
 def apply_index_entries(
@@ -204,15 +175,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show protection, index, current-state, and latest-snapshot status for a file.",
     )
     check_parser.add_argument("file")
+    check_parser.add_argument("--json", action="store_true")
+    check_parser.add_argument("--json-compact", action="store_true")
 
     status_parser = subparsers.add_parser(
         "status",
         help="Alias for check. Kept for compatibility with older repository workflows.",
     )
     status_parser.add_argument("file")
+    status_parser.add_argument("--json", action="store_true")
+    status_parser.add_argument("--json-compact", action="store_true")
 
     list_parser = subparsers.add_parser("list", help="List important snapshots for a file.")
     list_parser.add_argument("file")
+
+    doctor_parser = subparsers.add_parser("doctor", help="Scan and optionally repair CodeGuard metadata health.")
+    doctor_parser.add_argument("--repair", action="store_true")
+    doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument("--json-compact", action="store_true")
+
+    batch_parser = subparsers.add_parser("batch", help="Run validate-index, backup, or status in batch mode.")
+    batch_parser.add_argument("action", choices=["validate-index", "backup", "status"])
+    batch_parser.add_argument("files", nargs="+")
+    batch_parser.add_argument("--fail-fast", action="store_true")
+    batch_parser.add_argument("--json", action="store_true")
+    batch_parser.add_argument("--json-compact", action="store_true")
+
+    schema_parser = subparsers.add_parser("schema", help="Show JSON schema metadata.")
+    schema_parser.add_argument(
+        "target",
+        nargs="?",
+        default="all",
+        choices=["all", "status", "doctor", "batch"],
+    )
+    schema_parser.add_argument("--json-compact", action="store_true")
 
     rollback_parser = subparsers.add_parser("rollback", help="Restore a previous snapshot.")
     rollback_parser.add_argument("file")
@@ -259,10 +255,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if validate_feature_index(args.file, args.project, threshold=args.max_lines) else 1
 
     if args.command in {"check", "status"}:
-        return 0 if show_status(args.file, args.project) else 1
+        return 0 if show_status(args.file, args.project, json_output=args.json, json_compact=args.json_compact) else 1
 
     if args.command == "list":
         list_versions(args.file, args.project)
+        return 0
+
+    if args.command == "doctor":
+        return 0 if run_doctor(args.project, repair=args.repair, json_output=args.json, json_compact=args.json_compact) else 1
+
+    if args.command == "batch":
+        return 0 if batch_run(
+            args.action,
+            args.files,
+            args.project,
+            fail_fast=args.fail_fast,
+            json_output=args.json,
+            json_compact=args.json_compact,
+        ) else 1
+
+    if args.command == "schema":
+        show_schema(args.target, compact=args.json_compact)
         return 0
 
     if args.command == "rollback":

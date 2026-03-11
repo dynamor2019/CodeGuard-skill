@@ -1,17 +1,14 @@
-# CodeGuard Global Launcher
+﻿# CodeGuard Global Launcher
 
 This folder contains the global `codeguard` launcher.
 It is not a second implementation. Its job is to forward project commands to the local official script at `scripts/codeguard.py`.
 
-这个目录包含全局 `codeguard` 启动器。
-它不是第二套实现，它的作用只是把项目命令转发给项目内的官方脚本 `scripts/codeguard.py`。
-
+杩欎釜鐩綍鍖呭惈鍏ㄥ眬 `codeguard` 鍚姩鍣ㄣ€?瀹冧笉鏄浜屽瀹炵幇锛屽畠鐨勪綔鐢ㄥ彧鏄妸椤圭洰鍛戒护杞彂缁欓」鐩唴鐨勫畼鏂硅剼鏈?`scripts/codeguard.py`銆?
 ## Install
 
 Requires Python 3.10 or newer.
 
-需要 Python 3.10 或更高版本。
-
+闇€瑕?Python 3.10 鎴栨洿楂樼増鏈€?
 ```bash
 # Install the skill bundle into detected IDE skill folders
 python install.py
@@ -21,24 +18,21 @@ python install.py --install-cli
 ```
 
 ```bash
-# 安装技能包到检测到的 IDE 技能目录
-python install.py
+# 瀹夎鎶€鑳藉寘鍒版娴嬪埌鐨?IDE 鎶€鑳界洰褰?python install.py
 
-# 同时安装技能包和全局启动器
-python install.py --install-cli
+# 鍚屾椂瀹夎鎶€鑳藉寘鍜屽叏灞€鍚姩鍣?python install.py --install-cli
 ```
 
 On Windows the launcher is installed into `%USERPROFILE%\.codeguard\bin`.
 On macOS and Linux it is installed into `~/.local/bin`.
 
-在 Windows 上，启动器会安装到 `%USERPROFILE%\.codeguard\bin`。
-在 macOS 和 Linux 上，会安装到 `~/.local/bin`。
-
+鍦?Windows 涓婏紝鍚姩鍣ㄤ細瀹夎鍒?`%USERPROFILE%\.codeguard\bin`銆?鍦?macOS 鍜?Linux 涓婏紝浼氬畨瑁呭埌 `~/.local/bin`銆?
 ## Supported Commands
 
 Global command:
 
-- `codeguard status`
+- `codeguard status` (supports `--json`)
+- `codeguard doctor` (supports `--json`)
 
 Forwarded project-local commands:
 
@@ -52,15 +46,16 @@ Forwarded project-local commands:
 - `codeguard snapshot`
 - `codeguard rollback`
 - `codeguard list`
+- `codeguard status` (supports `--json`)
+- `codeguard doctor` (supports `--json`)
+- `codeguard batch` (supports `--json` and `--fail-fast`)
 
-支持的命令：
+鏀寔鐨勫懡浠わ細
 
-全局命令：
+鍏ㄥ眬鍛戒护锛?
+- `codeguard status` (supports `--json`)
 
-- `codeguard status`
-
-会转发到项目内官方脚本的命令：
-
+浼氳浆鍙戝埌椤圭洰鍐呭畼鏂硅剼鏈殑鍛戒护锛?
 - `codeguard init`
 - `codeguard add`
 - `codeguard index`
@@ -71,6 +66,9 @@ Forwarded project-local commands:
 - `codeguard snapshot`
 - `codeguard rollback`
 - `codeguard list`
+- `codeguard status` (supports `--json`)
+- `codeguard doctor` (supports `--json`)
+- `codeguard batch` (supports `--json` and `--fail-fast`)
 
 ## Notes
 
@@ -78,8 +76,8 @@ Forwarded project-local commands:
 - For files over 200 lines, create or update the feature index only after the user authorizes it.
 - Success still depends on explicit user confirmation, not on tests alone.
 
-补充说明：
+琛ュ厖璇存槑锛?
+- 璇峰湪宸茬粡鍖呭惈 CodeGuard 鎶€鑳藉寘鐨勯」鐩唴浣跨敤杩欎釜鍚姩鍣ㄣ€?- 瀵硅秴杩?200 琛岀殑鏂囦欢锛屽彧鏈夊湪鐢ㄦ埛鎺堟潈鍚庢墠鑳藉垱寤烘垨鏇存柊鍔熻兘绱㈠紩銆?- 鎴愬姛浠嶇劧鍙互鐢ㄦ埛鏄庣‘纭浣滀负鍑嗙怀锛屼笉鑳戒粎闈犳祴璇曠粨鏋滃垽鏂€?
 
-- 请在已经包含 CodeGuard 技能包的项目内使用这个启动器。
-- 对超过 200 行的文件，只有在用户授权后才能创建或更新功能索引。
-- 成功仍然只以用户明确确认作为准绳，不能仅靠测试结果判断。
+
+- `codeguard schema` (supports `--json-compact`)

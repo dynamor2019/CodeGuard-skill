@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.4.0"
 CONFIG_DIR = Path.home() / ".codeguard"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
@@ -53,6 +53,10 @@ LOCAL_COMMANDS = {
     "snapshot",
     "rollback",
     "list",
+    "status",
+    "doctor",
+    "batch",
+    "schema",
 }
 
 
@@ -152,6 +156,10 @@ Project-local passthrough commands:
   snapshot
   rollback
   list
+  status
+  doctor
+  batch
+  schema
 
 Notes:
   - The single official implementation lives in scripts/codeguard.py inside the project.
