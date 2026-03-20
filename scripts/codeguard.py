@@ -53,6 +53,8 @@ COMMENT_FORMATS = {
     ".go": {"start": "//", "end": ""},
     ".rs": {"start": "//", "end": ""},
     ".html": {"start": "<!--", "end": "-->"},
+    ".xaml": {"start": "<!--", "end": "-->"},
+    ".xml": {"start": "<!--", "end": "-->"},
     ".css": {"start": "/*", "end": "*/"},
 }
 SIDECAR_INDEX_EXTENSIONS = {
@@ -80,6 +82,25 @@ LEGACY_PROTECTION_PATTERNS = (
 def get_comment_format(file_path: str | Path) -> dict[str, str]:
     ext = Path(file_path).suffix.lower()
     return COMMENT_FORMATS.get(ext, {"start": "//", "end": ""})
+
+
+def describe_inline_comment_syntax(file_path: str | Path) -> str:
+    comment = get_comment_format(file_path)
+    if comment["end"]:
+        return f"{comment['start']} ... {comment['end']}"
+    return f"{comment['start']} ..."
+
+
+def get_index_mode(file_path: str | Path) -> str:
+    return INDEX_STATE_SOURCE_INLINE if can_embed_inline_index(file_path) else INDEX_STATE_SOURCE_SIDECAR
+
+
+def describe_index_format(file_path: str | Path, project_path: str | Path = ".") -> str:
+    if can_embed_inline_index(file_path):
+        return f"inline comments ({describe_inline_comment_syntax(file_path)})"
+
+    sidecar = get_sidecar_index_path(file_path, project_path)
+    return f"sidecar JSON ({sidecar.name})"
 
 
 def build_json_payload(report_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -583,11 +604,21 @@ def ensure_protection_marker(
     return True
 
 
-def normalize_index_payload(line: str) -> str:
+def normalize_index_payload(line: str, file_path: str | Path) -> str | None:
+    comment = get_comment_format(file_path)
     payload = line.strip()
-    payload = re.sub(r"^(?://|#|/\*+|\*|<!--)\s*", "", payload)
-    payload = re.sub(r"\s*(?:\*/|-->)\s*$", "", payload)
-    return payload.strip()
+    start = comment["start"]
+    end = comment["end"]
+
+    if not payload.startswith(start):
+        return None
+
+    payload = payload[len(start) :].strip()
+    if end:
+        if not payload.endswith(end):
+            return None
+        payload = payload[: -len(end)].strip()
+    return payload
 
 
 def normalize_signature_text(text: str) -> str:
@@ -683,10 +714,12 @@ def leading_preamble_length(lines: list[str]) -> int:
     return count
 
 
-def find_feature_index_bounds(lines: list[str]) -> tuple[int | None, int | None]:
+def find_feature_index_bounds(lines: list[str], file_path: str | Path) -> tuple[int | None, int | None]:
     start = None
     for index, line in enumerate(lines):
-        payload = normalize_index_payload(line)
+        payload = normalize_index_payload(line, file_path)
+        if payload is None:
+            continue
         if payload == FEATURE_INDEX_START:
             start = index
             continue
@@ -695,14 +728,16 @@ def find_feature_index_bounds(lines: list[str]) -> tuple[int | None, int | None]
     return None, None
 
 
-def extract_feature_index_entries_from_lines(lines: list[str]) -> list[tuple[str, int]]:
-    start, end = find_feature_index_bounds(lines)
+def extract_feature_index_entries_from_lines(
+    lines: list[str], file_path: str | Path
+) -> list[tuple[str, int]]:
+    start, end = find_feature_index_bounds(lines, file_path)
     if start is None or end is None:
         return []
 
     entries: list[tuple[str, int]] = []
     for line in lines[start + 1 : end]:
-        payload = normalize_index_payload(line)
+        payload = normalize_index_payload(line, file_path)
         if not payload:
             continue
         match = FEATURE_INDEX_ENTRY.match(payload)
@@ -718,7 +753,7 @@ def get_feature_index(file_path: str | Path, project_path: str | Path = ".") -> 
         return []
 
     if can_embed_inline_index(target):
-        return extract_feature_index_entries_from_lines(read_text(target).splitlines())
+        return extract_feature_index_entries_from_lines(read_text(target).splitlines(), target)
 
     sidecar_payload = read_sidecar_index(target, project_path)
     if sidecar_payload is None:
@@ -798,7 +833,7 @@ def apply_feature_index(
     lines = read_text(target).splitlines()
     prefix_len = leading_preamble_length(lines)
     main_lines = lines[prefix_len:]
-    start, end = find_feature_index_bounds(main_lines)
+    start, end = find_feature_index_bounds(main_lines, target)
 
     old_body_start = prefix_len + 1
     if start is not None and end is not None:
@@ -868,7 +903,7 @@ def validate_feature_index(
     warnings: list[str] = []
 
     if inline_mode:
-        start, end = find_feature_index_bounds(lines)
+        start, end = find_feature_index_bounds(lines, target)
         if required and (start is None or end is None):
             problems.append(
                 f"Feature index is required for files over {threshold} lines but no valid index block was found."
@@ -913,12 +948,14 @@ def validate_feature_index(
         warnings.extend(detect_signature_drift(lines, entries, stored_signatures))
 
     valid = not problems
-    mode = "inline" if inline_mode else "sidecar"
+    mode = get_index_mode(target)
+    format_description = describe_index_format(target, project_root)
     if not quiet:
         print(f"Feature index status for: {get_file_key(target, project_root)}")
         print(f"  Line count: {len(lines)}")
         print(f"  Required: {'yes' if required else 'no'}")
         print(f"  Mode: {mode}")
+        print(f"  Format: {format_description}")
         print(f"  Entries: {len(entries)}")
         print(f"  Validation: {'valid' if valid else 'invalid'}")
         for warning in warnings:
@@ -937,10 +974,12 @@ def show_feature_index(file_path: str | Path, project_path: str | Path = ".") ->
 
     entries = get_feature_index(target, project_root)
     required = is_index_required(target, project_root)
-    mode = "inline" if can_embed_inline_index(target) else "sidecar"
+    mode = get_index_mode(target)
+    format_description = describe_index_format(target, project_root)
     print(f"Feature index for: {get_file_key(target, project_root)}")
     print(f"  Required: {'yes' if required else 'no'}")
     print(f"  Mode: {mode}")
+    print(f"  Format: {format_description}")
     print(f"  Entries: {len(entries)}")
     if mode == "sidecar":
         print(f"  Sidecar: {get_sidecar_index_path(target, project_root).as_posix()}")
@@ -1305,7 +1344,7 @@ def gather_file_status(file_path: str | Path, project_path: str | Path = ".") ->
     index_required = is_index_required(target, project_root)
     index_valid = validate_feature_index(target, project_root, quiet=True)
     index_state = index["index_state"].get(file_key)
-    mode = "inline" if can_embed_inline_index(target) else "sidecar"
+    mode = get_index_mode(target)
 
     latest_snapshot = versions[-1] if versions else None
     rollback_ready = latest_snapshot is not None and Path(latest_snapshot.get("backup_path", "")).exists()
@@ -1330,6 +1369,7 @@ def gather_file_status(file_path: str | Path, project_path: str | Path = ".") ->
         "index_valid": index_valid,
         "index_entries": len(entries),
         "index_mode": mode,
+        "index_format": describe_index_format(target, project_root),
         "index_stale": stale_index,
         "index_state": index_state,
         "rollback_ready": rollback_ready,

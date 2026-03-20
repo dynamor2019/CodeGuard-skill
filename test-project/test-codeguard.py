@@ -260,6 +260,121 @@ class CodeGuardTests(unittest.TestCase):
             snapshot = create_version_snapshot(target, "JSON Feature", tmpdir)
             self.assertIsNotNone(snapshot)
 
+    def test_inline_index_must_match_file_comment_style(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "large.py")
+            write_large_python_file(target)
+
+            wrong_style_index = (
+                "// [CodeGuard Feature Index]\n"
+                "// - Workflow entry -> line 3\n"
+                "// - State updates -> line 6\n"
+                "// - Generated data -> line 25\n"
+                "// [/CodeGuard Feature Index]\n\n"
+            )
+            content = target.read_text(encoding="utf-8")
+            target.write_text(wrong_style_index + content, encoding="utf-8")
+
+            self.assertEqual(get_feature_index(target, tmpdir), [])
+            self.assertFalse(validate_feature_index(target, tmpdir, quiet=True))
+
+    def test_validate_index_output_describes_index_format(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+
+            py_target = Path(tmpdir, "large.py")
+            write_large_python_file(py_target)
+            apply_feature_index(
+                py_target,
+                [("Workflow entry", 3), ("State updates", 6), ("Generated data", 25)],
+                tmpdir,
+            )
+
+            py_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "validate-index",
+                    str(py_target),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(py_result.returncode, 0, py_result.stdout + py_result.stderr)
+            self.assertIn("Format: inline comments (# ...)", py_result.stdout)
+
+            json_target = Path(tmpdir, "large.json")
+            payload_lines = ["{"]
+            for i in range(1, 240):
+                suffix = "," if i < 239 else ""
+                payload_lines.append(f'  "k{i}": {i}{suffix}')
+            payload_lines.append("}")
+            json_target.write_text("\n".join(payload_lines) + "\n", encoding="utf-8")
+            apply_feature_index(
+                json_target,
+                [("Configuration root", 1), ("Generated keys", 10)],
+                tmpdir,
+            )
+
+            json_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "validate-index",
+                    str(json_target),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(json_result.returncode, 0, json_result.stdout + json_result.stderr)
+            self.assertIn("Format: sidecar JSON", json_result.stdout)
+
+    def test_large_xaml_uses_inline_xml_comment_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "large.xaml")
+            lines = [
+                '<?xml version="1.0" encoding="utf-8"?>',
+                "<Window>",
+                '  <Grid Name="Root">',
+            ]
+            while len(lines) < 230:
+                lines.append(f'    <TextBlock Name="T{len(lines)}" Text="L{len(lines)}" />')
+            lines.extend(["  </Grid>", "</Window>"])
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            applied = apply_feature_index(
+                target,
+                [("Window root", 2), ("Main grid", 3), ("Generated controls", 10)],
+                tmpdir,
+            )
+            self.assertIsNotNone(applied)
+            self.assertTrue(validate_feature_index(target, tmpdir, quiet=True))
+            self.assertFalse(get_sidecar_index_path(target, tmpdir).exists())
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "show-index",
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Mode: inline", result.stdout)
+            self.assertIn("Format: inline comments (<!-- ... -->)", result.stdout)
+
     def test_doctor_reports_and_repairs_last_version_mismatch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir, "sample.py")
