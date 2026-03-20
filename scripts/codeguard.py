@@ -55,6 +55,7 @@ COMMENT_FORMATS = {
     ".html": {"start": "<!--", "end": "-->"},
     ".xaml": {"start": "<!--", "end": "-->"},
     ".xml": {"start": "<!--", "end": "-->"},
+    ".csproj": {"start": "<!--", "end": "-->"},
     ".css": {"start": "/*", "end": "*/"},
 }
 SIDECAR_INDEX_EXTENSIONS = {

@@ -378,6 +378,46 @@ class CodeGuardTests(unittest.TestCase):
             self.assertIn("Mode: inline", result.stdout)
             self.assertIn("Format: inline comments (<!-- ... -->)", result.stdout)
 
+    def test_large_csproj_uses_inline_xml_comment_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir, "Demo.csproj")
+            lines = [
+                '<?xml version="1.0" encoding="utf-8"?>',
+                '<Project Sdk="Microsoft.NET.Sdk">',
+                "  <PropertyGroup>",
+            ]
+            while len(lines) < 230:
+                lines.append(f"    <DefineConstants>FLAG_{len(lines)}</DefineConstants>")
+            lines.extend(["  </PropertyGroup>", "</Project>"])
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            applied = apply_feature_index(
+                target,
+                [("Project root", 2), ("Property group", 3), ("Generated constants", 10)],
+                tmpdir,
+            )
+            self.assertIsNotNone(applied)
+            self.assertTrue(validate_feature_index(target, tmpdir, quiet=True))
+            self.assertFalse(get_sidecar_index_path(target, tmpdir).exists())
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "show-index",
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Mode: inline", result.stdout)
+            self.assertIn("Format: inline comments (<!-- ... -->)", result.stdout)
+
     def test_doctor_reports_and_repairs_last_version_mismatch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir, "sample.py")

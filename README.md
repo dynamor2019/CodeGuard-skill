@@ -119,7 +119,7 @@ Rules:
 - Do not use a single unified comment style across languages.
   Use file-specific comment syntax for inline indexes:
   `.py/.sh/.rb/.php` -> `# ...`, `.js/.ts/.go/.rs` -> `// ...`,
-  `.c/.cpp/.h/.java/.cs/.css` -> `/* ... */`, `.html/.xaml/.xml` -> `<!-- ... -->`.
+  `.c/.cpp/.h/.java/.cs/.css` -> `/* ... */`, `.html/.xaml/.xml/.csproj` -> `<!-- ... -->`.
   For non-comment-friendly files (for example `.json/.yaml/.toml/.ini/.env/.properties`), use sidecar JSON index files.
 
 ## 功能索引格式
@@ -149,7 +149,7 @@ Rules:
   `.py/.sh/.rb/.php` 使用 `# ...`，
   `.js/.ts/.go/.rs` 使用 `// ...`，
   `.c/.cpp/.h/.java/.cs/.css` 使用 `/* ... */`，
-  `.html/.xaml/.xml` 使用 `<!-- ... -->`。
+  `.html/.xaml/.xml/.csproj` 使用 `<!-- ... -->`。
   对于不适合内联注释的文件（如 `.json/.yaml/.toml/.ini/.env/.properties`），必须使用 sidecar JSON 索引文件。
 ## Recommended Workflow
 
