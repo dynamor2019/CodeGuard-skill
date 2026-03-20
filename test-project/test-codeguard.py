@@ -99,7 +99,7 @@ class CodeGuardTests(unittest.TestCase):
             self.assertEqual(content.count("[CodeGuard Protection]"), 1)
             self.assertIn("Version: 2", content)
 
-    def test_confirm_success_updates_current_state_without_creating_snapshot(self):
+    def test_confirm_success_creates_auto_snapshot_and_policy_note(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir, "test.txt")
             target.write_text("Initial content\n", encoding="utf-8")
@@ -116,17 +116,20 @@ class CodeGuardTests(unittest.TestCase):
             self.assertFalse(get_temp_backup_path(target, tmpdir).exists())
 
             index = load_index(tmpdir)
-            self.assertEqual(len(index["versions"]["test.txt"]), 1)
+            self.assertEqual(len(index["versions"]["test.txt"]), 2)
 
             current_state = get_current_state(target, tmpdir)
             self.assertIsNotNone(current_state)
-            self.assertEqual(current_state["source"], "confirm")
-            self.assertEqual(current_state["reason"], "Refine implementation")
+            self.assertEqual(current_state["source"], "snapshot")
+            self.assertEqual(current_state["reason"], "Auto snapshot after confirm: Refine implementation")
             self.assertEqual(current_state["hash"], calculate_hash(target))
 
             record_path = Path(tmpdir, ".codeguard", "records", "modifications.md")
             self.assertTrue(record_path.exists())
             self.assertIn("Refine implementation", record_path.read_text(encoding="utf-8"))
+
+            content = target.read_text(encoding="utf-8")
+            self.assertIn("Policy: Do not modify directly. Explain reason before edits.", content)
 
     def test_manual_snapshot_creates_new_important_version(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -140,11 +143,11 @@ class CodeGuardTests(unittest.TestCase):
 
             snapshot = create_manual_snapshot(target, "Feature", "Milestone approved", tmpdir)
             self.assertIsNotNone(snapshot)
-            self.assertEqual(snapshot["version"], 2)
+            self.assertEqual(snapshot["version"], 3)
             self.assertEqual(snapshot["reason"], "Milestone approved")
 
             versions = list_versions(target, tmpdir)
-            self.assertEqual([item["version"] for item in versions], [1, 2])
+            self.assertEqual([item["version"] for item in versions], [1, 2, 3])
 
             current_state = get_current_state(target, tmpdir)
             self.assertEqual(current_state["source"], "snapshot")
@@ -733,7 +736,7 @@ class CodeGuardTests(unittest.TestCase):
             self.assertIn("User confirmed the helper addition", record_path.read_text(encoding="utf-8"))
 
             index = load_index(tmpdir)
-            self.assertEqual(len(index["versions"]["sample.js"]), 1)
+            self.assertEqual(len(index["versions"]["sample.js"]), 2)
 
             snapshot_result = subprocess.run(
                 [
@@ -753,7 +756,7 @@ class CodeGuardTests(unittest.TestCase):
             self.assertEqual(snapshot_result.returncode, 0, snapshot_result.stdout + snapshot_result.stderr)
 
             index = load_index(tmpdir)
-            self.assertEqual(len(index["versions"]["sample.js"]), 2)
+            self.assertEqual(len(index["versions"]["sample.js"]), 3)
 
     def test_compatibility_cli_index_and_check_follow_feature_index_rules(self):
         with tempfile.TemporaryDirectory() as tmpdir:

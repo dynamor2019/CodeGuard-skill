@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     confirm_parser = subparsers.add_parser(
         "confirm",
-        help="Record a user-confirmed successful modification without creating a snapshot.",
+        help="Record a user-confirmed successful modification and create an auto snapshot.",
     )
     confirm_parser.add_argument("file")
     confirm_parser.add_argument("feature")
@@ -130,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     record_parser = subparsers.add_parser(
         "record",
-        help="Legacy alias for confirm. Permanent records are still created only after user confirmation.",
+        help="Legacy alias for confirm. Success records and auto snapshots are created only after user confirmation.",
     )
     record_parser.add_argument("file")
     record_parser.add_argument("feature")

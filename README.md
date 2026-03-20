@@ -70,9 +70,10 @@ Those are not the same state, and CodeGuard treats them differently.
 1. Tests are evidence, not truth.
    A change is only considered successful after the user explicitly confirms it.
 2. `confirm` records accepted success.
-   It updates the accepted current state and writes a permanent success record.
+   It updates the accepted current state, writes a permanent success record, and creates an auto snapshot.
+   It also updates a header policy note that blocks direct edits without a documented reason.
 3. `snapshot` records an important milestone.
-   It is manual on purpose, so version history stays meaningful.
+   You can still create manual milestones for additional business checkpoints.
 4. Large files need feature indexes.
    If a file is over 200 lines, it must have a feature index before editing, backup, confirm, or snapshot.
 5. Feature indexes require user authorization when they need to be created or updated.
@@ -84,9 +85,10 @@ Those are not the same state, and CodeGuard treats them differently.
 1. 测试只是证据，不是真相。
    只有用户明确确认成功，才算真正成功。
 2. `confirm` 负责记录“用户确认成功”的结果。
-   它会更新当前已接受状态，并写入永久成功记录。
+   它会更新当前已接受状态、写入永久成功记录，并自动创建一个快照。
+   同时会更新文件头策略注释：禁止直接修改，修改前必须说明原因。
 3. `snapshot` 负责记录“重要里程碑版本”。
-   它必须手动创建，这样版本历史才不会变成一堆无意义堆积。
+   你仍然可以手动创建额外里程碑，用于业务节点留档。
 4. 大文件必须有功能索引。
    超过 200 行的文件，在编辑、备份、确认或快照之前都必须先有功能索引。
 5. 当索引需要新建或更新时，必须先得到用户授权。
@@ -158,7 +160,7 @@ Rules:
 5. Make the change by targeting the indexed feature block.
 6. Ask the user whether the result actually succeeded.
 7. Run `confirm` only after explicit user confirmation.
-8. Run `snapshot` only if the user says the current state is important.
+8. `confirm` will auto-create a snapshot and update a header policy note that requires reasons for future edits.
 9. Use `rollback` when a later edit damages a previously protected state.
 
 ## 推荐工作流
@@ -170,7 +172,7 @@ Rules:
 5. 修改时尽量直接定位到索引对应的功能代码块。
 6. 修改完成后，必须问用户这次结果是否真的成功。
 7. 只有在用户明确确认后，才执行 `confirm`。
-8. 只有在用户明确说“这个状态很重要”后，才执行 `snapshot`。
+8. `confirm` 会自动创建快照，并在文件头写入“修改需说明原因”的策略注释。
 9. 如果后续改乱了，使用 `rollback` 回到之前的重要状态。
 ## Commands
 
@@ -196,7 +198,7 @@ python scripts/codeguard.py validate-index src/auth.py
 # Create a pre-modification backup
 python scripts/codeguard.py backup src/auth.py
 
-# Record a user-confirmed success without creating a snapshot
+# Record a user-confirmed success (auto snapshot is created)
 python scripts/codeguard.py confirm src/auth.py "User Authentication" "Fix token refresh bug" true
 
 # Manually mark the current state as an important milestone

@@ -12,8 +12,8 @@ Use `python cli/codeguard_cli.py ...` only when the user explicitly needs a glob
 ## Core Rules
 
 1. Treat tests, lint, and runtime checks as evidence only. Do not call a change successful unless the user explicitly says it succeeded.
-2. Record a permanent success only with `confirm`. `confirm` updates the accepted current state and writes the success record, but it does not create a new snapshot.
-3. Create a snapshot only when the user explicitly marks the current state as important. Use `snapshot` for that milestone.
+2. Record a permanent success only with `confirm`. `confirm` updates the accepted current state, writes the success record, creates an auto snapshot, and updates a header policy note that blocks direct edits without a documented reason.
+3. Use `snapshot` when the user explicitly marks an additional milestone beyond the auto snapshot created by `confirm`.
 4. Require a feature index for every file over 200 lines before editing, backing up, confirming, or snapshotting that file.
 5. Before generating or updating a required feature index, stop and ask for user authorization.
 6. Keep feature labels short and readable. Use a brief feature phrase, not a paragraph, function list, or change log.
@@ -72,7 +72,7 @@ When the user asks to edit a file:
 6. Make the requested change by targeting the indexed feature block instead of reworking the entire file.
 7. Ask the user whether the result actually succeeded.
 8. Run `python scripts/codeguard.py confirm <file> "<feature>" "<reason>" true` only after the user explicitly confirms success.
-9. If the user says the state is important, run `python scripts/codeguard.py snapshot <file> "<feature>" "<reason>"`.
+9. `confirm` now auto-creates a snapshot and header policy note; run `python scripts/codeguard.py snapshot <file> "<feature>" "<reason>"` only for additional manual milestones.
 10. If the user says the change failed, do not confirm it. Offer inspection, further fixes, or `rollback`.
 
 ## Observability and Recovery

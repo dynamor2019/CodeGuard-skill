@@ -68,6 +68,7 @@ SIDECAR_INDEX_EXTENSIONS = {
 }
 
 PROTECTION_MARKER = "[CodeGuard Protection]"
+MODIFICATION_POLICY_PREFIX = "Policy:"
 COMMENT_PREFIX_PATTERN = r"(?://|#|/\*+|\*|<!--)"
 LEGACY_PROTECTION_PATTERNS = (
     re.compile(re.escape(PROTECTION_MARKER)),
@@ -545,15 +546,101 @@ def render_marker(file_path: str | Path, feature_name: str, version: int) -> str
     protected_at = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     marker_lines = [
-        f"{start} {'=' * 60}{end}",
         f"{start} {PROTECTION_MARKER}{end}",
         f"{start} Feature: {feature_name}{end}",
         f"{start} Version: {version}{end}",
         f"{start} Protected: {protected_at}{end}",
-        f"{start} {'=' * 60}{end}",
+        f"{start} {MODIFICATION_POLICY_PREFIX} Do not modify directly. Explain reason before edits.{end}",
         "",
     ]
     return "\n".join(marker_lines)
+
+
+def format_comment_line(file_path: str | Path, payload: str) -> str:
+    comment = get_comment_format(file_path)
+    start = comment["start"]
+    end = f" {comment['end']}" if comment["end"] else ""
+    return f"{start} {payload}{end}"
+
+
+def apply_confirm_policy_note(file_path: str | Path, reason: str) -> bool:
+    target = resolve_file_path(file_path)
+    content = read_text(target)
+
+    reason_text = normalize_signature_text(reason)
+    if len(reason_text) > 120:
+        reason_text = reason_text[:117] + "..."
+
+    policy_payload = (
+        f"{MODIFICATION_POLICY_PREFIX} Do not modify directly. "
+        f"Explain reason before edits. Last confirm reason: {reason_text}"
+    )
+
+    if not has_codeguard_marker(content):
+        # Fallback for files where previous edits replaced the full file and removed the marker.
+        # Avoid inserting a new header into large inline-index files because it can invalidate index line references.
+        if is_index_required(target) and can_embed_inline_index(target):
+            return False
+        header = format_comment_line(target, policy_payload)
+        lines = content.splitlines()
+        prefix_len = leading_preamble_length(lines)
+        preamble = lines[:prefix_len]
+        body = lines[prefix_len:]
+
+        merged: list[str] = []
+        if preamble:
+            merged.extend(preamble)
+            merged.append("")
+        merged.append(header)
+        if body:
+            merged.append("")
+            merged.extend(body)
+        write_text(target, "\n".join(merged).rstrip("\n") + "\n")
+        return True
+
+    lines = content.splitlines()
+    marker_line = None
+    for idx, line in enumerate(lines):
+        if PROTECTION_MARKER in line:
+            marker_line = idx
+            break
+    if marker_line is None:
+        return False
+
+    search_end = min(len(lines), marker_line + 12)
+    replaced = False
+    for idx in range(marker_line + 1, search_end):
+        payload = normalize_index_payload(lines[idx], target)
+        if not payload:
+            continue
+        if payload.startswith(MODIFICATION_POLICY_PREFIX):
+            lines[idx] = format_comment_line(target, policy_payload)
+            replaced = True
+            break
+
+    if not replaced:
+        for idx in range(marker_line + 1, search_end):
+            if "=" * 10 in lines[idx]:
+                lines[idx] = format_comment_line(target, policy_payload)
+                replaced = True
+                break
+
+    if not replaced:
+        for idx in range(marker_line + 1, search_end):
+            payload = normalize_index_payload(lines[idx], target)
+            if not payload:
+                continue
+            if payload.startswith("Protected:"):
+                lines[idx] = format_comment_line(target, f"{payload} | {policy_payload}")
+                replaced = True
+                break
+
+    if not replaced:
+        return False
+
+    trailing_newline = "\n" if content.endswith("\n") else ""
+    write_text(target, "\n".join(lines) + trailing_newline)
+    return True
 
 
 def update_marker_metadata(
@@ -600,7 +687,20 @@ def ensure_protection_marker(
         return False
 
     marker = render_marker(target, feature_name, version)
-    write_text(target, marker + content)
+    lines = content.splitlines()
+    prefix_len = leading_preamble_length(lines)
+    preamble = lines[:prefix_len]
+    body = lines[prefix_len:]
+
+    merged: list[str] = []
+    if preamble:
+        merged.extend(preamble)
+        merged.append("")
+    merged.extend(marker.splitlines())
+    if body:
+        merged.append("")
+        merged.extend(body)
+    write_text(target, "\n".join(merged).rstrip("\n") + "\n")
     return True
 
 
@@ -1313,10 +1413,21 @@ def confirm_modification(
         temp_backup.unlink()
         print(f"Temporary backup removed: {temp_backup.as_posix()}")
 
+    if apply_confirm_policy_note(target, reason):
+        print("Post-confirm modification policy note updated in file header.")
+    else:
+        print("Warning: could not update header policy note (CodeGuard marker missing or unsupported format).")
+
     update_current_state(target, feature_name, project_root, reason=reason, source="confirm")
     record_path = write_modification_record(target, feature_name, reason, project_root)
+    auto_snapshot_reason = f"Auto snapshot after confirm: {reason}"
+    snapshot = create_manual_snapshot(target, feature_name, auto_snapshot_reason, project_root)
+    if snapshot is None:
+        print("Failed to create auto snapshot after confirm.")
+        return False
+
     print("User-confirmed modification recorded.")
-    print("Run `python scripts/codeguard.py snapshot ...` only if the user marks this state as important.")
+    print("Auto snapshot created after confirm.")
     print(f"Modification record: {record_path.as_posix()}")
     return True
 
@@ -1730,7 +1841,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     confirm_parser = subparsers.add_parser(
         "confirm",
-        help="Record a user-confirmed successful modification without creating a milestone snapshot.",
+        help="Record a user-confirmed successful modification and create an auto snapshot.",
     )
     confirm_parser.add_argument("file")
     confirm_parser.add_argument("feature")
