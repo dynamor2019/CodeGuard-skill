@@ -29,6 +29,8 @@ from codeguard import (
     show_feature_index,
     validate_feature_index,
     apply_feature_index,
+    generate_feature_index_entries,
+    review_full_document_for_index,
     batch_run,
     run_doctor,
     show_status as core_show_status,
@@ -38,9 +40,9 @@ from codeguard import (
 
 DEFAULT_CONFIRM_REASON = "User confirmed via compatibility CLI"
 ANALYZE_REMOVAL_MESSAGE = (
-    "Automatic function-based indexing was removed. "
-    'Use `python scripts/codeguard-cli.py index <file> --entry "Feature description:LineNumber"` '
-    "after user approval."
+    "Automatic function-based indexing was removed. Deprecated alias. "
+    'Use `python scripts/codeguard-cli.py index <file> --auto` '
+    'or provide repeated `--entry "Feature description:LineNumber"` arguments.'
 )
 
 
@@ -58,20 +60,37 @@ def show_status(file_path: str, project_path: str | Path = ".", *, json_output: 
 def apply_index_entries(
     file_path: str,
     entry_specs: list[str] | None,
+    *,
+    auto: bool = False,
     project_path: str | Path = ".",
 ) -> bool:
-    if not entry_specs:
-        print(
-            "Feature index entries are required. "
-            'Use repeated `--entry "Feature description:LineNumber"` arguments.'
-        )
+    if auto and entry_specs:
+        print("Use either --auto or --entry, not both.")
         return False
 
-    try:
-        entries = [parse_index_entry_spec(item) for item in entry_specs]
-    except ValueError as exc:
-        print(exc)
-        return False
+    if auto:
+        try:
+            _, reviewed_lines, reviewed_hash = review_full_document_for_index(file_path, project_path)
+            entries = generate_feature_index_entries(file_path, project_path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc)
+            return False
+        print(
+            f"Full-document review completed: {len(reviewed_lines)} lines "
+            f"(hash {reviewed_hash})"
+        )
+    else:
+        if not entry_specs:
+            print(
+                "Feature index entries are required. "
+                'Use --auto or repeated `--entry "Feature description:LineNumber"` arguments.'
+            )
+            return False
+        try:
+            entries = [parse_index_entry_spec(item) for item in entry_specs]
+        except ValueError as exc:
+            print(exc)
+            return False
 
     return apply_feature_index(file_path, entries, project_path) is not None
 
@@ -148,17 +167,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     index_parser = subparsers.add_parser(
         "index",
-        help='Create or update a feature index. Use repeated --entry "Feature description:LineNumber".',
+        help='Create or update a feature index. Use --auto or repeated --entry "Feature description:LineNumber".',
     )
     index_parser.add_argument("file")
     index_parser.add_argument("--entry", action="append")
+    index_parser.add_argument("--auto", action="store_true")
 
     analyze_parser = subparsers.add_parser(
         "analyze",
-        help="Deprecated alias for index. CodeGuard no longer auto-generates function indexes.",
+        help="Deprecated alias for index.",
     )
     analyze_parser.add_argument("file")
     analyze_parser.add_argument("--entry", action="append")
+    analyze_parser.add_argument("--auto", action="store_true")
 
     show_index_parser = subparsers.add_parser("show-index", help="Show the current feature index.")
     show_index_parser.add_argument("file")
@@ -194,9 +215,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--json", action="store_true")
     doctor_parser.add_argument("--json-compact", action="store_true")
 
-    batch_parser = subparsers.add_parser("batch", help="Run validate-index, backup, or status in batch mode.")
-    batch_parser.add_argument("action", choices=["validate-index", "backup", "status"])
+    batch_parser = subparsers.add_parser("batch", help="Run validate-index, backup, status, or index in batch mode.")
+    batch_parser.add_argument("action", choices=["validate-index", "backup", "status", "index"])
     batch_parser.add_argument("files", nargs="+")
+    batch_parser.add_argument("--auto", action="store_true")
     batch_parser.add_argument("--fail-fast", action="store_true")
     batch_parser.add_argument("--json", action="store_true")
     batch_parser.add_argument("--json-compact", action="store_true")
@@ -239,13 +261,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if create_manual_snapshot(args.file, args.feature, args.reason, args.project) else 1
 
     if args.command == "index":
-        return 0 if apply_index_entries(args.file, args.entry, args.project) else 1
+        return 0 if apply_index_entries(args.file, args.entry, auto=args.auto, project_path=args.project) else 1
 
     if args.command == "analyze":
-        if not args.entry:
+        if not args.entry and not args.auto:
             print(ANALYZE_REMOVAL_MESSAGE)
             return 1
-        return 0 if apply_index_entries(args.file, args.entry, args.project) else 1
+        return 0 if apply_index_entries(args.file, args.entry, auto=args.auto, project_path=args.project) else 1
 
     if args.command == "show-index":
         show_feature_index(args.file, args.project)
@@ -269,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
             args.action,
             args.files,
             args.project,
+            auto_index=args.auto,
             fail_fast=args.fail_fast,
             json_output=args.json,
             json_compact=args.json_compact,

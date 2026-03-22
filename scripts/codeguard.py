@@ -35,6 +35,7 @@ SIDECAR_INDEX_SUFFIX = ".codeguard-index.json"
 INDEX_STATE_SOURCE_INLINE = "inline"
 INDEX_STATE_SOURCE_SIDECAR = "sidecar"
 JSON_SCHEMA_VERSION = "1.0"
+AUTO_INDEX_MAX_ENTRIES = 8
 
 COMMENT_FORMATS = {
     ".js": {"start": "//", "end": ""},
@@ -907,10 +908,152 @@ def parse_index_entry_spec(spec: str) -> tuple[str, int]:
     return label, line_number
 
 
+def _condense_label(text: str, *, limit: int = 64) -> str:
+    normalized = re.sub(r"\s+", " ", text.strip())
+    normalized = normalized.strip("`'\"-:;,.()[]{}")
+    if len(normalized) > limit:
+        normalized = normalized[: limit - 3].rstrip() + "..."
+    return normalized
+
+
+def _sample_entries(entries: list[tuple[str, int]], max_entries: int) -> list[tuple[str, int]]:
+    if len(entries) <= max_entries:
+        return entries
+    if max_entries <= 1:
+        return [entries[0]]
+
+    selected: list[tuple[str, int]] = []
+    seen: set[int] = set()
+    last_index = len(entries) - 1
+    for i in range(max_entries):
+        idx = round(i * last_index / (max_entries - 1))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        selected.append(entries[idx])
+    return selected
+
+
+def review_full_document_for_index(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+) -> tuple[Path, list[str], str]:
+    project_root = normalize_project_path(project_path)
+    target = resolve_file_path(file_path, project_root)
+    if not target.exists():
+        raise FileNotFoundError(f"File not found: {target.as_posix()}")
+
+    # Read the full document once before any index generation decision.
+    content = read_text(target)
+    lines = content.splitlines()
+    if not lines:
+        raise ValueError("Cannot generate index for an empty file.")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    return target, lines, digest
+
+
+def generate_feature_index_entries(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+    *,
+    max_entries: int = AUTO_INDEX_MAX_ENTRIES,
+) -> list[tuple[str, int]]:
+    target, lines, _ = review_full_document_for_index(file_path, project_path)
+    ext = target.suffix.lower()
+    candidates: list[tuple[str, int]] = []
+
+    py_pattern = re.compile(r"^(?:async\s+def|def|class)\s+([A-Za-z_]\w*)")
+    js_pattern = re.compile(
+        r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)|"
+        r"^(?:export\s+)?class\s+([A-Za-z_]\w*)|"
+        r"^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\(",
+    )
+    c_like_pattern = re.compile(
+        r"^(?:public|private|protected|internal|static|sealed|virtual|override|\s)*"
+        r"(?:class|struct|interface|enum)\s+([A-Za-z_]\w*)|"
+        r"^(?:public|private|protected|internal|static|virtual|override|\s)*"
+        r"[A-Za-z_<>\[\],\s]+\s+([A-Za-z_]\w*)\s*\(",
+    )
+    xml_pattern = re.compile(r"^<([A-Za-z_][\w:.-]*)\b")
+    toml_ini_pattern = re.compile(r"^\[([^\]]+)\]")
+
+    for line_no, raw in enumerate(lines, start=1):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+
+        label = ""
+        if ext == ".py":
+            match = py_pattern.match(stripped)
+            if match:
+                label = match.group(1)
+        elif ext in {".js", ".ts", ".jsx", ".tsx", ".go", ".rs"}:
+            match = js_pattern.match(stripped)
+            if match:
+                label = next((group for group in match.groups() if group), "")
+        elif ext in {".java", ".c", ".cpp", ".h", ".cs"}:
+            match = c_like_pattern.match(stripped)
+            if match:
+                label = next((group for group in match.groups() if group), "")
+        elif ext in {".html", ".xml", ".xaml", ".csproj"}:
+            if stripped.startswith("</") or stripped.startswith("<?") or stripped.startswith("<!"):
+                continue
+            match = xml_pattern.match(stripped)
+            if match:
+                label = match.group(1)
+        elif ext in {".json", ".yml", ".yaml"}:
+            if stripped.startswith(("{", "}", "[", "]", "-", "#")):
+                continue
+            if ":" in stripped:
+                label = stripped.split(":", 1)[0].strip().strip("\"'")
+        elif ext in {".toml", ".ini", ".properties", ".env"}:
+            sec = toml_ini_pattern.match(stripped)
+            if sec:
+                label = sec.group(1)
+            elif "=" in stripped and not stripped.startswith("#"):
+                label = stripped.split("=", 1)[0].strip()
+        else:
+            if re.match(r"^[A-Za-z_][\w\s:.-]{3,}$", stripped):
+                label = stripped
+
+        label = _condense_label(label)
+        if label:
+            candidates.append((label, line_no))
+
+    if not candidates:
+        # Fallback: pick representative non-empty lines.
+        fallback: list[tuple[str, int]] = []
+        for line_no, raw in enumerate(lines, start=1):
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("#", "//", "/*", "*", "<!--", "{", "}", "[", "]")):
+                continue
+            fallback.append((_condense_label(stripped), line_no))
+        candidates = fallback
+
+    # Keep unique labels while preserving order.
+    unique: list[tuple[str, int]] = []
+    seen_labels: set[str] = set()
+    for label, line_no in candidates:
+        if not label or label in seen_labels:
+            continue
+        seen_labels.add(label)
+        unique.append((label, line_no))
+
+    if not unique:
+        raise ValueError("Could not auto-generate index entries from file content.")
+
+    sampled = _sample_entries(unique, max_entries=max_entries)
+    return sorted(sampled, key=lambda item: item[1])
+
+
 def apply_feature_index(
     file_path: str | Path,
     entries: list[tuple[str, int]],
     project_path: str | Path = ".",
+    *,
+    quiet: bool = False,
 ) -> list[tuple[str, int]] | None:
     project_root = normalize_project_path(project_path)
     target = resolve_file_path(file_path, project_root)
@@ -918,20 +1061,24 @@ def apply_feature_index(
         print(f"File not found: {target.as_posix()}")
         return None
 
+    # Hard requirement: always read the full document before generating/updating index.
+    _, reviewed_lines, _ = review_full_document_for_index(target, project_root)
     ordered_entries = sorted(entries, key=lambda item: item[1])
     if not can_embed_inline_index(target):
-        line_count = count_code_lines(target, project_root)
+        line_count = len(reviewed_lines)
         for _, line_number in ordered_entries:
             if line_number > line_count:
-                print(f"Feature index line {line_number} exceeds file length {line_count}.")
+                if not quiet:
+                    print(f"Feature index line {line_number} exceeds file length {line_count}.")
                 return None
         sidecar_path = write_sidecar_index(target, ordered_entries, project_root)
         upsert_index_state(target, project_root, entries=ordered_entries)
-        print(f"Feature index sidecar updated for: {get_file_key(target, project_root)}")
-        print(f"  Sidecar: {sidecar_path.as_posix()}")
+        if not quiet:
+            print(f"Feature index sidecar updated for: {get_file_key(target, project_root)}")
+            print(f"  Sidecar: {sidecar_path.as_posix()}")
         return ordered_entries
 
-    lines = read_text(target).splitlines()
+    lines = list(reviewed_lines)
     prefix_len = leading_preamble_length(lines)
     main_lines = lines[prefix_len:]
     start, end = find_feature_index_bounds(main_lines, target)
@@ -977,7 +1124,8 @@ def apply_feature_index(
     content = "\n".join(final_lines).rstrip("\n") + "\n"
     write_text(target, content)
     upsert_index_state(target, project_root, entries=adjusted_entries)
-    print(f"Feature index updated for: {get_file_key(target, project_root)}")
+    if not quiet:
+        print(f"Feature index updated for: {get_file_key(target, project_root)}")
     return adjusted_entries
 
 
@@ -1671,6 +1819,7 @@ def batch_run(
     files: list[str],
     project_path: str | Path = ".",
     *,
+    auto_index: bool = False,
     fail_fast: bool = False,
     json_output: bool = False,
     json_compact: bool = False,
@@ -1697,6 +1846,28 @@ def batch_run(
                 file_result["error"] = f"File not found: {target.as_posix()}"
             else:
                 file_result["status"] = status_payload
+        elif action == "index":
+            if not auto_index:
+                ok = False
+                file_result["ok"] = ok
+                file_result["error"] = (
+                    "Batch index requires --auto to avoid reusing static entries across files."
+                )
+            else:
+                try:
+                    _, reviewed_lines, reviewed_hash = review_full_document_for_index(item, project_path)
+                    entries = generate_feature_index_entries(item, project_path)
+                except (FileNotFoundError, ValueError) as exc:
+                    ok = False
+                    file_result["ok"] = ok
+                    file_result["error"] = str(exc)
+                else:
+                    applied = apply_feature_index(item, entries, project_path, quiet=json_output)
+                    ok = applied is not None
+                    file_result["ok"] = ok
+                    file_result["entries"] = entries
+                    file_result["reviewed_line_count"] = len(reviewed_lines)
+                    file_result["reviewed_hash"] = reviewed_hash
         else:
             if json_output:
                 emit_json(
@@ -1734,6 +1905,15 @@ def batch_run(
                     print(f"  Backup: {backup_path}")
                 else:
                     print("  Backup failed")
+            elif action == "index":
+                if ok:
+                    print(f"  Auto index entries: {len(file_result.get('entries', []))}")
+                    print(
+                        f"  Full-document review: {file_result.get('reviewed_line_count', 0)} lines "
+                        f"(hash {file_result.get('reviewed_hash', 'n/a')})"
+                    )
+                else:
+                    print(f"  Error: {file_result.get('error', 'index generation failed')}")
             else:
                 print(f"  Validate index: {'ok' if ok else 'failed'}")
 
@@ -1822,10 +2002,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     index_parser = subparsers.add_parser(
         "index",
-        help='Create or update a feature index. Use repeated --entry "Feature description:LineNumber".',
+        help='Create or update a feature index. Use --auto or repeated --entry "Feature description:LineNumber".',
     )
     index_parser.add_argument("file")
-    index_parser.add_argument("--entry", action="append", required=True)
+    index_parser.add_argument("--entry", action="append")
+    index_parser.add_argument("--auto", action="store_true", help="Auto-generate entries from file content.")
 
     show_index_parser = subparsers.add_parser("show-index", help="Show the current feature index.")
     show_index_parser.add_argument("file")
@@ -1885,10 +2066,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     batch_parser = subparsers.add_parser(
         "batch",
-        help="Run validate-index, backup, or status in batch mode.",
+        help="Run validate-index, backup, status, or index in batch mode.",
     )
-    batch_parser.add_argument("action", choices=["validate-index", "backup", "status"])
+    batch_parser.add_argument("action", choices=["validate-index", "backup", "status", "index"])
     batch_parser.add_argument("files", nargs="+")
+    batch_parser.add_argument("--auto", action="store_true", help="Required for batch index generation.")
     batch_parser.add_argument("--fail-fast", action="store_true", help="Stop batch execution on first failure.")
     batch_parser.add_argument("--json", action="store_true", help="Emit batch result as JSON.")
     batch_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
@@ -1939,11 +2121,29 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if create_version_snapshot(args.file, args.feature, args.project) else 1
 
     if args.command == "index":
-        try:
-            entries = [parse_index_entry_spec(item) for item in args.entry]
-        except ValueError as exc:
-            print(exc)
+        if args.auto and args.entry:
+            print("Use either --auto or --entry, not both.")
             return 1
+        if not args.auto and not args.entry:
+            print('Feature index entries are required. Use --auto or repeated --entry "Feature:Line".')
+            return 1
+        if args.auto:
+            try:
+                _, reviewed_lines, reviewed_hash = review_full_document_for_index(args.file, args.project)
+                entries = generate_feature_index_entries(args.file, args.project)
+            except (FileNotFoundError, ValueError) as exc:
+                print(exc)
+                return 1
+            print(
+                f"Full-document review completed: {len(reviewed_lines)} lines "
+                f"(hash {reviewed_hash})"
+            )
+        else:
+            try:
+                entries = [parse_index_entry_spec(item) for item in args.entry]
+            except ValueError as exc:
+                print(exc)
+                return 1
         applied = apply_feature_index(args.file, entries, args.project)
         return 0 if applied is not None else 1
 
@@ -2011,6 +2211,7 @@ def main(argv: list[str] | None = None) -> int:
             args.action,
             args.files,
             args.project,
+            auto_index=args.auto,
             fail_fast=args.fail_fast,
             json_output=args.json,
             json_compact=args.json_compact,

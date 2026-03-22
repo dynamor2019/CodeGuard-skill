@@ -560,6 +560,76 @@ class CodeGuardTests(unittest.TestCase):
             self.assertTrue(payload["stopped_early"])
             self.assertEqual(payload["schema_version"], "1.0")
 
+    def test_batch_index_requires_auto_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir, "one.py")
+            first.write_text("print('one')\n", encoding="utf-8")
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "batch",
+                    "index",
+                    str(first),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertIn("requires --auto", payload["results"][0]["error"])
+
+    def test_batch_index_auto_reads_each_file_and_generates_distinct_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir, "alpha.py")
+            second = Path(tmpdir, "beta.py")
+            first_lines = ["def alpha_bootstrap():", "    return 1", "", "class AlphaService:", "    pass", ""]
+            second_lines = ["def beta_bootstrap():", "    return 2", "", "class BetaGateway:", "    pass", ""]
+            while len(first_lines) < 230:
+                first_lines.append(f"alpha_value_{len(first_lines)} = {len(first_lines)}")
+            while len(second_lines) < 230:
+                second_lines.append(f"beta_item_{len(second_lines)} = {len(second_lines)}")
+            first.write_text("\n".join(first_lines) + "\n", encoding="utf-8")
+            second.write_text("\n".join(second_lines) + "\n", encoding="utf-8")
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "codeguard.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--project",
+                    tmpdir,
+                    "batch",
+                    "index",
+                    str(first),
+                    str(second),
+                    "--auto",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["result_count"], 2)
+
+            first_result = payload["results"][0]
+            second_result = payload["results"][1]
+            self.assertGreater(first_result.get("reviewed_line_count", 0), 200)
+            self.assertGreater(second_result.get("reviewed_line_count", 0), 200)
+            self.assertTrue(first_result.get("reviewed_hash"))
+            self.assertTrue(second_result.get("reviewed_hash"))
+            self.assertNotEqual(first_result["entries"], second_result["entries"])
+
     def test_status_json_compact_is_single_line(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir, "sample.py")
