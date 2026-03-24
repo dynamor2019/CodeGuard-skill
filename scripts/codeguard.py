@@ -1,4 +1,15 @@
-﻿#!/usr/bin/env python3
+# [CodeGuard Feature Index]
+# - get_comment_format -> line 96
+# - index_lock -> line 286
+# - get_sidecar_index_path -> line 449
+# - apply_confirm_policy_note -> line 579
+# - get_feature_index -> line 863
+# - ensure_index_ready -> line 1251
+# - write_modification_record -> line 1541
+# - main -> line 2215
+# [/CodeGuard Feature Index]
+
+#!/usr/bin/env python3
 """Project-local feature indexing, confirmation, and snapshot workflow for CodeGuard."""
 
 from __future__ import annotations
@@ -1326,8 +1337,18 @@ def create_snapshot_record(
     if reason:
         snapshot["reason"] = reason
 
+    stale_backup_paths: list[Path] = []
+
     def mutation(index: dict[str, Any]) -> None:
-        index["versions"].setdefault(file_key, []).append(snapshot)
+        previous_versions = list(index["versions"].get(file_key, []))
+        for old_snapshot in previous_versions:
+            backup = old_snapshot.get("backup_path")
+            if not backup:
+                continue
+            old_backup_path = Path(str(backup))
+            stale_backup_paths.append(old_backup_path)
+
+        index["versions"][file_key] = [snapshot]
         index["last_version"][file_key] = version
         current = {
             "timestamp": snapshot["timestamp"],
@@ -1343,6 +1364,16 @@ def create_snapshot_record(
             protected.append(feature_name)
 
     mutate_index(project_root, mutation)
+
+    for stale_path in stale_backup_paths:
+        if stale_path.as_posix() == backup_path.as_posix():
+            continue
+        if not stale_path.exists():
+            continue
+        try:
+            stale_path.unlink()
+        except OSError:
+            continue
 
     print(f"Snapshot created: v{version}")
     print(f"  Feature: {feature_name}")
@@ -1531,7 +1562,7 @@ def write_modification_record(
             "",
         ]
     )
-    with records_path.open("a", encoding="utf-8", newline="\n") as handle:
+    with records_path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(entry)
     return records_path
 
@@ -1542,6 +1573,7 @@ def confirm_modification(
     reason: str,
     success: bool = True,
     project_path: str | Path = ".",
+    refresh_index_files: list[str] | None = None,
 ) -> bool:
     project_root = normalize_project_path(project_path)
     init_codeguard(project_root, quiet=True)
@@ -1574,6 +1606,14 @@ def confirm_modification(
     if snapshot is None:
         print("Failed to create auto snapshot after confirm.")
         return False
+
+    if refresh_index_files is not None:
+        refresh_targets = [target.as_posix()]
+        refresh_targets.extend(refresh_index_files)
+        if not refresh_feature_indexes(refresh_targets, project_root):
+            print("Failed to refresh feature indexes after confirm.")
+            return False
+        print("Feature indexes refreshed after confirm.")
 
     print("User-confirmed modification recorded.")
     print("Auto snapshot created after confirm.")
@@ -1611,6 +1651,7 @@ def gather_file_status(file_path: str | Path, project_path: str | Path = ".") ->
     stale_index = False
     if index_state is not None:
         stale_index = bool(index_state.get("file_hash")) and index_state.get("file_hash") != calculate_hash(target)
+    missing_index = bool(index_required and (not index_valid or len(entries) == 0))
 
     orphan_count = 0
     for snapshot in versions:
@@ -1631,10 +1672,76 @@ def gather_file_status(file_path: str | Path, project_path: str | Path = ".") ->
         "index_mode": mode,
         "index_format": describe_index_format(target, project_root),
         "index_stale": stale_index,
+        "index_missing": missing_index,
+        "index_summary": {
+            "required": index_required,
+            "missing": missing_index,
+            "stale": stale_index,
+            "action_required": missing_index or stale_index,
+        },
         "index_state": index_state,
         "rollback_ready": rollback_ready,
         "orphan_snapshots": orphan_count,
     }
+
+
+def refresh_feature_indexes(file_paths: list[str], project_path: str | Path = ".") -> bool:
+    project_root = normalize_project_path(project_path)
+    unique_paths: list[str] = []
+    seen: set[str] = set()
+    for file_path in file_paths:
+        file_text = str(file_path).strip()
+        if not file_text:
+            continue
+        if file_text in seen:
+            continue
+        seen.add(file_text)
+        unique_paths.append(file_text)
+
+    if not unique_paths:
+        return True
+
+    all_ok = True
+    for file_path in unique_paths:
+        target = resolve_file_path(file_path, project_root)
+        if not target.exists():
+            print(f"Refresh index skipped (file not found): {target.as_posix()}")
+            all_ok = False
+            continue
+
+        status = gather_file_status(target, project_root)
+        if status is None:
+            print(f"Refresh index skipped (status unavailable): {target.as_posix()}")
+            all_ok = False
+            continue
+
+        if not status.get("index_required", False):
+            print(f"Refresh index skipped (not required): {status['file_key']}")
+            continue
+
+        needs_refresh = bool(
+            status.get("index_stale", False)
+            or status.get("index_missing", False)
+            or not status.get("index_valid", False)
+        )
+        if not needs_refresh:
+            print(f"Refresh index skipped (up-to-date): {status['file_key']}")
+            continue
+
+        try:
+            entries = generate_feature_index_entries(target, project_root)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"Refresh index failed for {get_file_key(target, project_root)}: {exc}")
+            all_ok = False
+            continue
+
+        applied = apply_feature_index(target, entries, project_root, quiet=True)
+        if applied is None:
+            print(f"Refresh index failed for {get_file_key(target, project_root)}")
+            all_ok = False
+            continue
+        print(f"Refresh index updated: {get_file_key(target, project_root)} ({len(applied)} entries)")
+    return all_ok
 
 
 def show_status(
@@ -2029,6 +2136,12 @@ def build_parser() -> argparse.ArgumentParser:
     confirm_parser.add_argument("feature")
     confirm_parser.add_argument("reason")
     confirm_parser.add_argument("success", nargs="?", default="true")
+    confirm_parser.add_argument(
+        "--refresh-index",
+        nargs="*",
+        metavar="FILE",
+        help="Refresh feature indexes after confirm. If FILE is omitted, refreshes the confirmed file.",
+    )
 
     snapshot_parser = subparsers.add_parser(
         "snapshot",
@@ -2169,6 +2282,7 @@ def main(argv: list[str] | None = None) -> int:
             args.reason,
             success_value,
             args.project,
+            refresh_index_files=args.refresh_index,
         )
         return 0 if success else 1
 
@@ -2227,6 +2341,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-

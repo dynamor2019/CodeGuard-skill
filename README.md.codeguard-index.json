@@ -1,0 +1,40 @@
+{
+  "file": "README.md",
+  "updated_at": "2026-03-24T17:13:10",
+  "line_count": 289,
+  "file_hash": "933334972bea3600dd1d286a5f00a1cb704096abac5128cfae108e83358c150e",
+  "entries": [
+    {
+      "feature": "Local version protection and feature indexing for AI-assisted...",
+      "line": 5
+    },
+    {
+      "feature": "CodeGuard solves a very practical problem",
+      "line": 10
+    },
+    {
+      "feature": "Recent updates focused on real-world recovery and observability",
+      "line": 40
+    },
+    {
+      "feature": "A change is only considered successful after the user explici...",
+      "line": 73
+    },
+    {
+      "feature": "It also updates a header policy note that blocks direct edits...",
+      "line": 76
+    },
+    {
+      "feature": "Example",
+      "line": 102
+    },
+    {
+      "feature": "Use file-specific comment syntax for inline indexes",
+      "line": 120
+    },
+    {
+      "feature": "Compatibility layers",
+      "line": 225
+    }
+  ]
+}
