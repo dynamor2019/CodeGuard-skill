@@ -1,8 +1,8 @@
 {
   "file": "README.md",
-  "updated_at": "2026-03-24T17:13:10",
-  "line_count": 289,
-  "file_hash": "933334972bea3600dd1d286a5f00a1cb704096abac5128cfae108e83358c150e",
+  "updated_at": "2026-03-29T15:24:41",
+  "line_count": 301,
+  "file_hash": "f44b13c636b76f6208d62d89f04b67c9fb1d392e334c35e946341e1e5658263f",
   "entries": [
     {
       "feature": "Local version protection and feature indexing for AI-assisted...",
@@ -18,23 +18,23 @@
     },
     {
       "feature": "A change is only considered successful after the user explici...",
-      "line": 73
+      "line": 77
     },
     {
       "feature": "It also updates a header policy note that blocks direct edits...",
-      "line": 76
+      "line": 80
     },
     {
       "feature": "Example",
-      "line": 102
+      "line": 106
     },
     {
       "feature": "Use file-specific comment syntax for inline indexes",
-      "line": 120
+      "line": 124
     },
     {
       "feature": "Compatibility layers",
-      "line": 225
+      "line": 237
     }
   ]
 }

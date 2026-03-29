@@ -1,12 +1,12 @@
 # [CodeGuard Feature Index]
-# - get_comment_format -> line 96
-# - index_lock -> line 286
-# - get_sidecar_index_path -> line 449
-# - apply_confirm_policy_note -> line 579
-# - get_feature_index -> line 863
-# - ensure_index_ready -> line 1251
-# - write_modification_record -> line 1541
-# - main -> line 2215
+# - get_comment_format -> line 99
+# - set_active_lock_timeout -> line 322
+# - mutate_index -> line 593
+# - write_text -> line 746
+# - find_feature_index_bounds -> line 1034
+# - show_feature_index -> line 1432
+# - write_modification_record -> line 1745
+# - main -> line 2457
 # [/CodeGuard Feature Index]
 
 #!/usr/bin/env python3
@@ -47,6 +47,9 @@ INDEX_STATE_SOURCE_INLINE = "inline"
 INDEX_STATE_SOURCE_SIDECAR = "sidecar"
 JSON_SCHEMA_VERSION = "1.0"
 AUTO_INDEX_MAX_ENTRIES = 8
+DEFAULT_LOCK_TIMEOUT_SECONDS = 0.8
+LOCK_RETRY_INTERVAL_SECONDS = 0.05
+ACTIVE_LOCK_TIMEOUT_SECONDS = DEFAULT_LOCK_TIMEOUT_SECONDS
 
 COMMENT_FORMATS = {
     ".js": {"start": "//", "end": ""},
@@ -283,44 +286,245 @@ def normalize_index_data(data: Any) -> tuple[dict[str, Any], list[str]]:
 
 
 @contextmanager
-def index_lock(project_path: str | Path = ".", timeout_seconds: float = 8.0):
+def index_lock(project_path: str | Path = ".", timeout_seconds: float | None = None):
     project_root = normalize_project_path(project_path)
     lock_path = project_root / LOCK_FILE
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    effective_timeout = ACTIVE_LOCK_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
 
     with lock_path.open("a+", encoding="utf-8") as handle:
         started = time.time()
         acquired = False
         while not acquired:
             try:
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try_acquire_handle_lock(handle)
                 acquired = True
             except OSError:
-                if time.time() - started >= timeout_seconds:
+                waited = time.time() - started
+                if waited >= effective_timeout:
+                    status = inspect_lock_state(project_root)
                     raise TimeoutError(
-                        f"Could not acquire CodeGuard state lock within {timeout_seconds:.1f}s"
+                        build_lock_timeout_message(
+                            project_root=project_root,
+                            lock_status=status,
+                            waited_seconds=waited,
+                            timeout_seconds=effective_timeout,
+                        )
                     )
-                time.sleep(0.05)
+                time.sleep(LOCK_RETRY_INTERVAL_SECONDS)
 
         try:
             yield
         finally:
-            if os.name == "nt":
-                import msvcrt
+            release_handle_lock(handle)
 
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+def set_active_lock_timeout(timeout_seconds: float) -> None:
+    if timeout_seconds < 0:
+        raise ValueError("lock timeout must be >= 0")
+    global ACTIVE_LOCK_TIMEOUT_SECONDS
+    ACTIVE_LOCK_TIMEOUT_SECONDS = timeout_seconds
+
+
+def try_acquire_handle_lock(handle: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def release_handle_lock(handle: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def lock_path_for_project(project_path: str | Path = ".") -> Path:
+    project_root = normalize_project_path(project_path)
+    return project_root / LOCK_FILE
+
+
+def inspect_lock_state(project_path: str | Path = ".") -> dict[str, Any]:
+    project_root = normalize_project_path(project_path)
+    lock_path = lock_path_for_project(project_root)
+    lock_exists = lock_path.exists()
+    last_modified: str | None = None
+    if lock_exists:
+        try:
+            last_modified = dt.datetime.fromtimestamp(lock_path.stat().st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            last_modified = None
+
+    can_acquire = True
+    occupied = False
+    probe_error: str | None = None
+    if lock_exists:
+        with lock_path.open("a+", encoding="utf-8") as handle:
+            try:
+                try_acquire_handle_lock(handle)
+            except OSError as exc:
+                can_acquire = False
+                occupied = True
+                probe_error = exc.__class__.__name__
             else:
-                import fcntl
+                release_handle_lock(handle)
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    suspected_stale = lock_exists and can_acquire
+    if occupied:
+        state_text = "occupied"
+        possible_causes = [
+            "并发进程：另一个 CodeGuard 正在写入索引。",
+            "误判可能较低：文件锁探测显示当前不可抢占。",
+        ]
+    elif suspected_stale:
+        state_text = "stale_or_idle"
+        possible_causes = [
+            "上次异常退出：遗留 lock 文件但当前并未被占用。",
+            "误判：某些工具可能创建了 lock 文件但未持有锁。",
+        ]
+    elif lock_exists:
+        state_text = "idle"
+        possible_causes = ["lock 文件存在，但当前可立即获取。"]
+    else:
+        state_text = "absent"
+        possible_causes = ["未发现 lock 文件。"]
+
+    return {
+        "project": project_root.as_posix(),
+        "lock_path": lock_path.as_posix(),
+        "lock_exists": lock_exists,
+        "last_modified": last_modified,
+        "can_acquire_immediately": can_acquire,
+        "occupied": occupied,
+        "suspected_stale": suspected_stale,
+        "state": state_text,
+        "probe_error": probe_error,
+        "possible_causes": possible_causes,
+        "suggested_commands": [
+            "python scripts/codeguard.py lock-status --json",
+            "python scripts/codeguard.py unlock --yes",
+            "python scripts/codeguard.py unlock --force --yes",
+        ],
+    }
+
+
+def build_lock_timeout_message(
+    *,
+    project_root: Path,
+    lock_status: dict[str, Any],
+    waited_seconds: float,
+    timeout_seconds: float,
+) -> str:
+    lock_path = lock_status["lock_path"]
+    state = lock_status["state"]
+    occupied = lock_status["occupied"]
+    stale = lock_status["suspected_stale"]
+    if occupied:
+        status_line = (
+            f"当前状态：另一个 CodeGuard 正在运行（state={state}, occupied=true），"
+            f"等待 {waited_seconds:.2f}s 后仍未拿到锁。"
+        )
+    elif stale:
+        status_line = (
+            f"当前状态：检测到疑似陈旧锁（state={state}, occupied=false），"
+            f"等待 {waited_seconds:.2f}s 后未继续。"
+        )
+    else:
+        status_line = (
+            f"当前状态：锁不可用（state={state}），等待 {waited_seconds:.2f}s 后未继续。"
+        )
+    suggest_line = (
+        "推荐命令："
+        f"python scripts/codeguard.py lock-status --project \"{project_root.as_posix()}\"；"
+        "若确认是陈旧锁，可执行 python scripts/codeguard.py unlock --yes"
+    )
+    risk_line = (
+        f"风险说明：强制解锁可能导致并发写入损坏，请仅在确认无其它进程占用时使用 --force --yes "
+        f"(lock_path={lock_path}, timeout={timeout_seconds:.2f}s)。"
+    )
+    return "\n".join([status_line, suggest_line, risk_line])
+
+
+def show_lock_status(
+    project_path: str | Path = ".",
+    *,
+    json_output: bool = False,
+    json_compact: bool = False,
+) -> bool:
+    status = inspect_lock_state(project_path)
+    if json_output:
+        emit_json(build_json_payload("lock-status", status), compact=json_compact)
+        return True
+
+    print("CodeGuard 锁状态")
+    print(f"  lock_path: {status['lock_path']}")
+    print(f"  lock_exists: {'yes' if status['lock_exists'] else 'no'}")
+    print(f"  last_modified: {status['last_modified'] or 'n/a'}")
+    print(f"  can_acquire_immediately: {'yes' if status['can_acquire_immediately'] else 'no'}")
+    print(f"  state: {status['state']}")
+    print("  possible_causes:")
+    for cause in status["possible_causes"]:
+        print(f"    - {cause}")
+    print("  next_steps:")
+    for command in status["suggested_commands"][:2]:
+        print(f"    - {command}")
+    return True
+
+
+def unlock_lock_file(
+    project_path: str | Path = ".",
+    *,
+    assume_yes: bool = False,
+    force: bool = False,
+) -> bool:
+    project_root = normalize_project_path(project_path)
+    status = inspect_lock_state(project_root)
+    lock_path = Path(status["lock_path"])
+    if not status["lock_exists"]:
+        print(f"lock 文件不存在，无需清理: {lock_path.as_posix()}")
+        return True
+
+    if status["occupied"]:
+        print("当前状态：检测到锁正在被占用（occupied=true）。")
+        print("推荐命令：先执行 python scripts/codeguard.py lock-status --json 查看详情。")
+        print("风险说明：占用中强制解锁可能造成 index.json 写入冲突。")
+        if not force:
+            print("默认拒绝解锁。若你明确接受风险，请使用 --force --yes。")
+            return False
+        if not assume_yes:
+            print("检测到占用时，必须同时提供 --force --yes 才允许继续。")
+            return False
+    else:
+        print("当前状态：lock 文件存在但未被占用，属于可清理的疑似陈旧锁。")
+        print("推荐命令：python scripts/codeguard.py unlock --yes")
+        print("风险说明：清理后下次命令会自动重建 lock 文件。")
+        if not assume_yes:
+            answer = input("输入 YES 确认清理陈旧锁: ").strip()
+            if answer != "YES":
+                print("已取消解锁。")
+                return False
+
+    try:
+        lock_path.unlink()
+    except OSError as exc:
+        print(f"清理失败: {exc}")
+        return False
+
+    print(f"已清理 lock 文件: {lock_path.as_posix()}")
+    return True
 
 
 def init_codeguard(project_path: str | Path = ".", quiet: bool = False) -> str:
@@ -2097,6 +2301,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    def add_lock_timeout_argument(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.add_argument(
+            "--lock-timeout",
+            type=float,
+            default=DEFAULT_LOCK_TIMEOUT_SECONDS,
+            help=f"Lock wait timeout in seconds (default: {DEFAULT_LOCK_TIMEOUT_SECONDS}).",
+        )
+
     init_parser = subparsers.add_parser("init", help="Initialize CodeGuard in a project.")
     init_parser.add_argument("path", nargs="?", default=None)
 
@@ -2106,6 +2318,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_parser.add_argument("file")
     add_parser.add_argument("feature")
+    add_lock_timeout_argument(add_parser)
 
     index_parser = subparsers.add_parser(
         "index",
@@ -2114,9 +2327,11 @@ def build_parser() -> argparse.ArgumentParser:
     index_parser.add_argument("file")
     index_parser.add_argument("--entry", action="append")
     index_parser.add_argument("--auto", action="store_true", help="Auto-generate entries from file content.")
+    add_lock_timeout_argument(index_parser)
 
     show_index_parser = subparsers.add_parser("show-index", help="Show the current feature index.")
     show_index_parser.add_argument("file")
+    add_lock_timeout_argument(show_index_parser)
 
     validate_index_parser = subparsers.add_parser(
         "validate-index",
@@ -2124,9 +2339,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate_index_parser.add_argument("file")
     validate_index_parser.add_argument("--max-lines", type=int, default=DEFAULT_INDEX_THRESHOLD)
+    add_lock_timeout_argument(validate_index_parser)
 
     backup_parser = subparsers.add_parser("backup", help="Create a pre-modification backup.")
     backup_parser.add_argument("file")
+    add_lock_timeout_argument(backup_parser)
 
     confirm_parser = subparsers.add_parser(
         "confirm",
@@ -2142,6 +2359,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="Refresh feature indexes after confirm. If FILE is omitted, refreshes the confirmed file.",
     )
+    add_lock_timeout_argument(confirm_parser)
 
     snapshot_parser = subparsers.add_parser(
         "snapshot",
@@ -2150,6 +2368,7 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_parser.add_argument("file")
     snapshot_parser.add_argument("feature")
     snapshot_parser.add_argument("reason")
+    add_lock_timeout_argument(snapshot_parser)
 
     rollback_parser = subparsers.add_parser("rollback", help="Restore a previous snapshot.")
     rollback_parser.add_argument("file")
@@ -2157,9 +2376,11 @@ def build_parser() -> argparse.ArgumentParser:
     selector.add_argument("--version", type=int)
     selector.add_argument("--feature")
     rollback_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt.")
+    add_lock_timeout_argument(rollback_parser)
 
     list_parser = subparsers.add_parser("list", help="List important snapshots for a file.")
     list_parser.add_argument("file")
+    add_lock_timeout_argument(list_parser)
 
     status_parser = subparsers.add_parser(
         "status",
@@ -2168,6 +2389,7 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("file")
     status_parser.add_argument("--json", action="store_true", help="Emit status as JSON.")
     status_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+    add_lock_timeout_argument(status_parser)
 
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -2176,6 +2398,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--repair", action="store_true", help="Repair safe metadata mismatches.")
     doctor_parser.add_argument("--json", action="store_true", help="Emit doctor report as JSON.")
     doctor_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+    add_lock_timeout_argument(doctor_parser)
 
     batch_parser = subparsers.add_parser(
         "batch",
@@ -2187,6 +2410,25 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--fail-fast", action="store_true", help="Stop batch execution on first failure.")
     batch_parser.add_argument("--json", action="store_true", help="Emit batch result as JSON.")
     batch_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+    add_lock_timeout_argument(batch_parser)
+
+    lock_status_parser = subparsers.add_parser(
+        "lock-status",
+        help="Show lock file diagnostics, occupancy, and actionable next steps.",
+    )
+    lock_status_parser.add_argument("--json", action="store_true", help="Emit lock status as JSON.")
+    lock_status_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+
+    unlock_parser = subparsers.add_parser(
+        "unlock",
+        help="Clean stale lock file with explicit authorization controls.",
+    )
+    unlock_parser.add_argument("--yes", action="store_true", help="Skip interactive confirmation.")
+    unlock_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Attempt cleanup even when lock is currently occupied (requires --yes).",
+    )
 
     schema_parser = subparsers.add_parser(
         "schema",
@@ -2226,114 +2468,139 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 1
 
-    if args.command == "init":
-        init_codeguard(args.path or args.project)
-        return 0
-
-    if args.command == "add":
-        return 0 if create_version_snapshot(args.file, args.feature, args.project) else 1
-
-    if args.command == "index":
-        if args.auto and args.entry:
-            print("Use either --auto or --entry, not both.")
+    if hasattr(args, "lock_timeout"):
+        try:
+            set_active_lock_timeout(float(args.lock_timeout))
+        except ValueError as exc:
+            print(f"Invalid --lock-timeout: {exc}")
             return 1
-        if not args.auto and not args.entry:
-            print('Feature index entries are required. Use --auto or repeated --entry "Feature:Line".')
-            return 1
-        if args.auto:
-            try:
-                _, reviewed_lines, reviewed_hash = review_full_document_for_index(args.file, args.project)
-                entries = generate_feature_index_entries(args.file, args.project)
-            except (FileNotFoundError, ValueError) as exc:
-                print(exc)
+
+    try:
+        if args.command == "init":
+            init_codeguard(args.path or args.project)
+            return 0
+
+        if args.command == "add":
+            return 0 if create_version_snapshot(args.file, args.feature, args.project) else 1
+
+        if args.command == "index":
+            if args.auto and args.entry:
+                print("Use either --auto or --entry, not both.")
                 return 1
-            print(
-                f"Full-document review completed: {len(reviewed_lines)} lines "
-                f"(hash {reviewed_hash})"
-            )
-        else:
+            if not args.auto and not args.entry:
+                print('Feature index entries are required. Use --auto or repeated --entry "Feature:Line".')
+                return 1
+            if args.auto:
+                try:
+                    _, reviewed_lines, reviewed_hash = review_full_document_for_index(args.file, args.project)
+                    entries = generate_feature_index_entries(args.file, args.project)
+                except (FileNotFoundError, ValueError) as exc:
+                    print(exc)
+                    return 1
+                print(
+                    f"Full-document review completed: {len(reviewed_lines)} lines "
+                    f"(hash {reviewed_hash})"
+                )
+            else:
+                try:
+                    entries = [parse_index_entry_spec(item) for item in args.entry]
+                except ValueError as exc:
+                    print(exc)
+                    return 1
+            applied = apply_feature_index(args.file, entries, args.project)
+            return 0 if applied is not None else 1
+
+        if args.command == "show-index":
+            show_feature_index(args.file, args.project)
+            return 0
+
+        if args.command == "validate-index":
+            return 0 if validate_feature_index(args.file, args.project, threshold=args.max_lines) else 1
+
+        if args.command == "backup":
+            return 0 if backup_before_modification(args.file, args.project) else 1
+
+        if args.command == "confirm":
             try:
-                entries = [parse_index_entry_spec(item) for item in args.entry]
+                success_value = parse_success(args.success)
             except ValueError as exc:
                 print(exc)
                 return 1
-        applied = apply_feature_index(args.file, entries, args.project)
-        return 0 if applied is not None else 1
+            success = confirm_modification(
+                args.file,
+                args.feature,
+                args.reason,
+                success_value,
+                args.project,
+                refresh_index_files=args.refresh_index,
+            )
+            return 0 if success else 1
 
-    if args.command == "show-index":
-        show_feature_index(args.file, args.project)
-        return 0
+        if args.command == "snapshot":
+            success = create_manual_snapshot(args.file, args.feature, args.reason, args.project)
+            return 0 if success else 1
 
-    if args.command == "validate-index":
-        return 0 if validate_feature_index(args.file, args.project, threshold=args.max_lines) else 1
+        if args.command == "rollback":
+            success = rollback(
+                args.file,
+                version=args.version,
+                feature=args.feature,
+                project_path=args.project,
+                force=args.yes,
+            )
+            return 0 if success else 1
 
-    if args.command == "backup":
-        return 0 if backup_before_modification(args.file, args.project) else 1
+        if args.command == "list":
+            list_versions(args.file, args.project)
+            return 0
 
-    if args.command == "confirm":
-        try:
-            success_value = parse_success(args.success)
-        except ValueError as exc:
-            print(exc)
-            return 1
-        success = confirm_modification(
-            args.file,
-            args.feature,
-            args.reason,
-            success_value,
-            args.project,
-            refresh_index_files=args.refresh_index,
-        )
-        return 0 if success else 1
+        if args.command == "status":
+            return 0 if show_status(
+                args.file,
+                args.project,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            ) else 1
 
-    if args.command == "snapshot":
-        success = create_manual_snapshot(args.file, args.feature, args.reason, args.project)
-        return 0 if success else 1
+        if args.command == "doctor":
+            return 0 if run_doctor(
+                args.project,
+                repair=args.repair,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            ) else 1
 
-    if args.command == "rollback":
-        success = rollback(
-            args.file,
-            version=args.version,
-            feature=args.feature,
-            project_path=args.project,
-            force=args.yes,
-        )
-        return 0 if success else 1
+        if args.command == "batch":
+            return 0 if batch_run(
+                args.action,
+                args.files,
+                args.project,
+                auto_index=args.auto,
+                fail_fast=args.fail_fast,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            ) else 1
 
-    if args.command == "list":
-        list_versions(args.file, args.project)
-        return 0
+        if args.command == "lock-status":
+            return 0 if show_lock_status(
+                args.project,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            ) else 1
 
-    if args.command == "status":
-        return 0 if show_status(
-            args.file,
-            args.project,
-            json_output=args.json,
-            json_compact=args.json_compact,
-        ) else 1
+        if args.command == "unlock":
+            return 0 if unlock_lock_file(
+                args.project,
+                assume_yes=args.yes,
+                force=args.force,
+            ) else 1
 
-    if args.command == "doctor":
-        return 0 if run_doctor(
-            args.project,
-            repair=args.repair,
-            json_output=args.json,
-            json_compact=args.json_compact,
-        ) else 1
-
-    if args.command == "batch":
-        return 0 if batch_run(
-            args.action,
-            args.files,
-            args.project,
-            auto_index=args.auto,
-            fail_fast=args.fail_fast,
-            json_output=args.json,
-            json_compact=args.json_compact,
-        ) else 1
-
-    if args.command == "schema":
-        show_schema(args.target, compact=args.json_compact)
-        return 0
+        if args.command == "schema":
+            show_schema(args.target, compact=args.json_compact)
+            return 0
+    except TimeoutError as exc:
+        print(exc)
+        return 1
 
     parser.print_help()
     return 1

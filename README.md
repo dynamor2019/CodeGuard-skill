@@ -40,6 +40,10 @@ CodeGuard 鐨勫仛娉曟洿鐩存帴锛?
 Recent updates focused on real-world recovery and observability:
 
 - Atomic state writes now include fsync + replace and an index lock file (`.codeguard/index.lock`) to reduce interruption/concurrency corruption risk.
+- Lock behavior is now low-interruption by default: fast fail on contention (default `--lock-timeout 0.8`) with human-readable next steps instead of long blocking.
+- New lock diagnostics and lightweight recovery controls:
+  - `python scripts/codeguard.py lock-status` (`--json` supported)
+  - `python scripts/codeguard.py unlock --yes` (stale lock cleanup)
 - `doctor` command added for metadata consistency checks, snapshot file validation, optional safe repair (`--repair`), and machine-readable output (`--json`).
 - Sidecar feature index support added for file types that are not safe for inline comments (for example JSON/YAML/TOML): `<file>.codeguard-index.json`.
 - Batch command added for repetitive workflows:
@@ -178,9 +182,11 @@ python scripts/codeguard.py show-index src/auth.py
 
 # Validate the index and the over-200-lines rule
 python scripts/codeguard.py validate-index src/auth.py
+python scripts/codeguard.py validate-index src/auth.py --lock-timeout 1.2
 
 # Create a pre-modification backup
 python scripts/codeguard.py backup src/auth.py
+python scripts/codeguard.py backup src/auth.py --lock-timeout 0.8
 
 # Record a user-confirmed success
 python scripts/codeguard.py confirm src/auth.py "User Authentication" "Fix token refresh bug" true
@@ -208,8 +214,14 @@ python scripts/codeguard.py doctor --repair
 python scripts/codeguard.py batch validate-index src/a.py src/b.py
 python scripts/codeguard.py batch backup src/a.py src/b.py
 python scripts/codeguard.py batch status src/a.py src/b.py
+python scripts/codeguard.py batch index src/a.py src/b.py --auto
 python scripts/codeguard.py batch status src/a.py src/b.py --json  # includes schema metadata + per-file results
 python scripts/codeguard.py batch status src/a.py src/b.py --fail-fast
+
+# Lock diagnostics and controlled unlock
+python scripts/codeguard.py lock-status
+python scripts/codeguard.py lock-status --json --json-compact
+python scripts/codeguard.py unlock --yes
 
 # Show stable JSON schema metadata for integrations
 python scripts/codeguard.py schema all

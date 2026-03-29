@@ -27,6 +27,7 @@ Use `python cli/codeguard_cli.py ...` only when the user explicitly needs a glob
 10. For metadata incidents or drift, run `doctor` before manual cleanup. Prefer automatic safe repair over ad-hoc edits to `index.json`.
 11. Treat token efficiency as a first-class objective: prefer index-guided narrow reads over broad file scans.
 12. Run index refresh/update for touched large files at the end of a successful cycle (after user confirmation), not repeatedly during intermediate failed attempts.
+13. Lock contention is non-blocking by default. Prefer quick retry/diagnosis (`lock-status`) over waiting; default lock timeout is `0.8s` and can be overridden by `--lock-timeout`.
 
 ## Token-Efficient Mode
 
@@ -98,6 +99,7 @@ When the user asks to edit a file:
 9. After confirmation, refresh/update index entries for touched large files so next rounds can locate code faster with fewer tokens.
 10. Run `python scripts/codeguard.py snapshot <file> "<feature>" "<reason>"` only when the user explicitly marks an important milestone.
 11. If the user says the change failed, do not confirm it. Offer inspection, further fixes, or `rollback`.
+12. If any command fails due to lock contention, run `python scripts/codeguard.py lock-status` first; clear only stale locks with explicit authorization (`unlock --yes`).
 
 ## Observability and Recovery
 
@@ -110,6 +112,9 @@ Use these commands proactively during troubleshooting and bulk edits:
 - `python scripts/codeguard.py batch validate-index <file1> <file2> ...`: batch validation.
 - `python scripts/codeguard.py batch backup <file1> <file2> ...`: batch backup.
 - `python scripts/codeguard.py batch status <file1> <file2> ...`: batch status checks.
+- `python scripts/codeguard.py lock-status [--json]`: lock diagnostics (path, mtime, immediate acquire test, likely causes, next steps).
+- `python scripts/codeguard.py unlock --yes`: clear stale lock after explicit consent.
+- Use `--lock-timeout <seconds>` on lock-dependent commands when you need custom wait behavior.
 
 ## Protect Completed Code
 
@@ -147,6 +152,8 @@ Explain that rollback also creates a `.rollback-backup.<timestamp>.bak` file nex
 | `python scripts/codeguard.py status <file>` | Show protection/index/snapshot/rollback status in one command |
 | `python scripts/codeguard.py doctor [--repair]` | Diagnose or repair metadata/snapshot consistency |
 | `python scripts/codeguard.py batch <action> <files...>` | Run validate-index, backup, or status in batch mode |
+| `python scripts/codeguard.py lock-status [--json]` | Show lock diagnostics and actionable suggestions |
+| `python scripts/codeguard.py unlock --yes` | Clear stale lock safely after explicit consent |
 | `python scripts/codeguard.py rollback <file> --version N` | Restore a previous important snapshot |
 
 ## Project Files
