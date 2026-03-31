@@ -1,0 +1,48 @@
+{
+  "file": "docs/codeguard-v2-design.md",
+  "updated_at": "2026-03-31T08:35:42",
+  "line_count": 234,
+  "file_hash": "031f80380cef6fcc567bc5d19f8d16749f02d3722219ec85c4ead96b35b8790c",
+  "entries": [
+    {
+      "feature": "Current-state diagnosis",
+      "line": 3
+    },
+    {
+      "feature": "Critical imbalances",
+      "line": 15
+    },
+    {
+      "feature": "Minimal-fix plans",
+      "line": 29
+    },
+    {
+      "feature": "Anti-patterns",
+      "line": 46
+    },
+    {
+      "feature": "Windows lock solution",
+      "line": 53
+    },
+    {
+      "feature": "Token reduction protocol",
+      "line": 112
+    },
+    {
+      "feature": "Async confirm design",
+      "line": 136
+    },
+    {
+      "feature": "Encoding guard hardening",
+      "line": 169
+    },
+    {
+      "feature": "Risk-driven policy draft",
+      "line": 192
+    },
+    {
+      "feature": "Error UX templates",
+      "line": 205
+    }
+  ]
+}
