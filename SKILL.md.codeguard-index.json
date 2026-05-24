@@ -1,0 +1,32 @@
+{
+  "file": "SKILL.md",
+  "updated_at": "2026-05-24T14:03:52",
+  "line_count": 233,
+  "file_hash": "53a93bc20fddbcaee92670d4c4a8216fe0abb949c68ff82199be06fc8bec7579",
+  "entries": [
+    {
+      "feature": "name: codeguard-skill",
+      "line": 2
+    },
+    {
+      "feature": "Use this when marking a confirmed success or important checkp...",
+      "line": 60
+    },
+    {
+      "feature": "When working with indexed files in large projects",
+      "line": 103
+    },
+    {
+      "feature": "When operating in compressed mode",
+      "line": 125
+    },
+    {
+      "feature": "This is especially useful for",
+      "line": 162
+    },
+    {
+      "feature": "Inline example",
+      "line": 176
+    }
+  ]
+}

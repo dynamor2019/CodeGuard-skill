@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python scripts/codeguard.py confirm scripts/codeguard.py \"test2\" \"testing append 2\" true)",
+      "Bash(python scripts/codeguard.py init)",
+      "Bash(python scripts/codeguard.py guard AGENTS.md --tier lite --feature \"test\" --reason \"e2e test\" --json-compact)",
+      "Bash(python scripts/codeguard.py guard SKILL.md --tier strict --feature \"test-strict\" --reason \"e2e strict\" --json-compact)",
+      "Bash(python scripts/codeguard.py confirm SKILL.md \"test-strict\" \"e2e confirm\" true)",
+      "Bash(python scripts/codeguard.py status SKILL.md)",
+      "Bash(rm -f .codeguard/records/modifications.md .codeguard/versions/*.bak .codeguard/temp/*.bak)",
+      "Bash(python scripts/codeguard.py doctor)",
+      "Bash(python scripts/codeguard.py guard scripts/codeguard.py --tier standard --feature \"demo\" --reason \"final test\" --json-compact)",
+      "Bash(python scripts/codeguard.py confirm scripts/codeguard.py \"demo\" \"final test\" true --add-marker)",
+      "Bash(python -c ' *)",
+      "WebSearch",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('scripts/codeguard.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python scripts/codeguard.py compress SKILL.md --level lite --json-compact)",
+      "Bash(python scripts/codeguard.py compress SKILL.md --level full)",
+      "Bash(python scripts/codeguard.py token-tips)",
+      "Bash(python scripts/codeguard.py compress scripts/codeguard.py --level full)",
+      "Bash(python scripts/codeguard.py compress /tmp/test.txt --level full)"
+    ]
+  }
+}

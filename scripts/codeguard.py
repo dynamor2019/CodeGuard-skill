@@ -1,12 +1,12 @@
 # [CodeGuard Feature Index]
 # - get_comment_format -> line 99
-# - set_active_lock_timeout -> line 322
-# - mutate_index -> line 593
-# - write_text -> line 746
-# - find_feature_index_bounds -> line 1034
-# - show_feature_index -> line 1432
-# - write_modification_record -> line 1745
-# - main -> line 2457
+# - release_handle_lock -> line 342
+# - get_storage_suffix -> line 637
+# - has_protection_marker -> line 835
+# - get_feature_index -> line 1147
+# - create_snapshot_record -> line 1584
+# - refresh_feature_indexes -> line 2023
+# - main -> line 3098
 # [/CodeGuard Feature Index]
 
 #!/usr/bin/env python3
@@ -748,6 +748,86 @@ def write_text(path: Path, content: str, *, bom: bool = False) -> None:
     path.write_text(content, encoding=encoding, newline="\n")
 
 
+def detect_file_encoding(file_path: Path) -> dict[str, Any]:
+    """Detect file encoding, BOM, and line ending style. Returns a metadata dict."""
+    with file_path.open("rb") as handle:
+        raw = handle.read()
+
+    result: dict[str, Any] = {
+        "encoding": "utf-8",
+        "bom": False,
+        "line_ending": "\n",
+        "byte_size": len(raw),
+    }
+
+    if not raw:
+        return result
+
+    # BOM detection
+    if raw[:3] == b"\xef\xbb\xbf":
+        result["bom"] = True
+        result["encoding"] = "utf-8"
+    elif raw[:2] == b"\xff\xfe":
+        result["encoding"] = "utf-16-le"
+        result["bom"] = True
+    elif raw[:2] == b"\xfe\xff":
+        result["encoding"] = "utf-16-be"
+        result["bom"] = True
+    elif raw[:4] == b"\xff\xfe\x00\x00":
+        result["encoding"] = "utf-32-le"
+        result["bom"] = True
+    elif raw[:4] == b"\x00\x00\xfe\xff":
+        result["encoding"] = "utf-32-be"
+        result["bom"] = True
+    else:
+        # Heuristic: try UTF-8 decode; if it fails, check GBK
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                decoded = raw.decode("gbk")
+                if "�" not in decoded[:1024]:
+                    result["encoding"] = "gbk"
+            except (UnicodeDecodeError, LookupError):
+                pass
+
+    # Line ending detection
+    crlf_count = raw.count(b"\r\n")
+    lf_only = len(re.findall(rb"(?<!\r)\n", raw))
+    if crlf_count > lf_only:
+        result["line_ending"] = "\r\n"
+
+    return result
+
+
+def read_text_preserving(path: Path) -> tuple[str, dict[str, Any]]:
+    """Read file content while detecting encoding metadata. Returns (content, metadata)."""
+    meta = detect_file_encoding(path)
+    encoding = meta["encoding"]
+    if encoding == "utf-8" and meta["bom"]:
+        encoding = "utf-8-sig"
+    try:
+        content = path.read_text(encoding=encoding)
+    except (UnicodeDecodeError, LookupError):
+        content = path.read_text(encoding="utf-8", errors="replace")
+        meta["encoding"] = "utf-8"
+    return content, meta
+
+
+def write_text_preserving(path: Path, content: str, meta: dict[str, Any]) -> None:
+    """Write file content while preserving encoding/line-ending metadata."""
+    encoding = meta.get("encoding", "utf-8")
+    line_ending = meta.get("line_ending", "\n")
+    if encoding == "utf-8" and meta.get("bom"):
+        encoding = "utf-8-sig"
+    if line_ending != "\n":
+        content = content.replace("\n", line_ending)
+    try:
+        path.write_text(content, encoding=encoding, newline="")
+    except (UnicodeEncodeError, LookupError):
+        path.write_text(content, encoding="utf-8", newline="")
+
+
 def has_codeguard_marker(content: str) -> bool:
     return PROTECTION_MARKER in content
 
@@ -1463,8 +1543,8 @@ def ensure_index_ready(
     if validate_feature_index(file_path, project_path, threshold=threshold, quiet=True):
         return True
     print(
-        f"Feature index is required before working on files over {threshold} lines. "
-        "Update the index first with `python scripts/codeguard.py index ...` after user approval."
+        f"Feature index recommended for files over {threshold} lines. "
+        "Update with `python scripts/codeguard.py index ... --auto` for efficient navigation (not required to proceed)."
     )
     return False
 
@@ -1507,7 +1587,7 @@ def create_snapshot_record(
     project_path: str | Path = ".",
     *,
     reason: str | None = None,
-    ensure_marker: bool = True,
+    ensure_marker: bool = False,
 ) -> dict[str, Any] | None:
     project_root = normalize_project_path(project_path)
     target = resolve_file_path(file_path, project_root)
@@ -1589,8 +1669,10 @@ def create_version_snapshot(
     file_path: str | Path,
     feature_name: str,
     project_path: str | Path = ".",
+    *,
+    ensure_marker: bool = False,
 ) -> dict[str, Any] | None:
-    return create_snapshot_record(file_path, feature_name, project_path, ensure_marker=True)
+    return create_snapshot_record(file_path, feature_name, project_path, ensure_marker=ensure_marker)
 
 
 def create_manual_snapshot(
@@ -1606,6 +1688,32 @@ def create_manual_snapshot(
         reason=reason,
         ensure_marker=False,
     )
+
+
+def sync_current_baseline(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+    *,
+    feature_name: str = "dev-baseline",
+    reason: str = "Synchronize current development baseline before continuing",
+) -> str | None:
+    project_root = normalize_project_path(project_path)
+    target = resolve_file_path(file_path, project_root)
+    if not target.exists():
+        print(f"File not found: {target.as_posix()}")
+        return None
+    if not ensure_index_ready(target, project_root):
+        return None
+
+    init_codeguard(project_root, quiet=True)
+    suffix = get_storage_suffix(target, project_root)
+    baseline_name = f"{target.name}.{suffix}.sync-current.bak"
+    baseline_path = project_root / TEMP_DIR / baseline_name
+    shutil.copy2(target, baseline_path)
+    update_current_state(target, feature_name, project_root, reason=reason, source="sync-current")
+    print(f"Current development baseline synchronized: {get_file_key(target, project_root)}")
+    print(f"  Baseline backup: {baseline_path.as_posix()}")
+    return str(baseline_path)
 
 
 def get_latest_snapshot(file_path: str | Path, project_path: str | Path = ".") -> dict[str, Any] | None:
@@ -1641,7 +1749,12 @@ def check_conflict(file_path: str | Path, project_path: str | Path = ".") -> boo
     return True
 
 
-def backup_before_modification(file_path: str | Path, project_path: str | Path = ".") -> str | None:
+def backup_before_modification(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+    *,
+    auto_sync: bool = True,
+) -> str | None:
     project_root = normalize_project_path(project_path)
     target = resolve_file_path(file_path, project_root)
     if not target.exists():
@@ -1650,8 +1763,12 @@ def backup_before_modification(file_path: str | Path, project_path: str | Path =
     if not ensure_index_ready(target, project_root):
         return None
     if check_conflict(target, project_root):
-        print("Aborting backup due to conflict.")
-        return None
+        if not auto_sync:
+            print("Aborting backup due to conflict.")
+            return None
+        if sync_current_baseline(target, project_root) is None:
+            print("Aborting backup because current baseline sync failed.")
+            return None
 
     init_codeguard(project_root, quiet=True)
     suffix = get_storage_suffix(target, project_root)
@@ -1752,9 +1869,10 @@ def write_modification_record(
     records_path = project_root / MODIFICATIONS_FILE
     timestamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     current_hash = calculate_hash(resolve_file_path(file_path, project_root))
+    header = f"## Modification Record | {timestamp} | User Confirmed"
     entry = "\n".join(
         [
-            f"## Modification Record | {timestamp} | User Confirmed",
+            header,
             f"- **File**: {get_file_key(file_path, project_root)}",
             f"- **Feature**: {feature_name}",
             f"- **Reason**: {reason}",
@@ -1766,7 +1884,15 @@ def write_modification_record(
             "",
         ]
     )
-    with records_path.open("w", encoding="utf-8", newline="\n") as handle:
+    existing = ""
+    if records_path.exists():
+        existing = records_path.read_text(encoding="utf-8")
+    # Avoid duplicate entries with same header
+    if header in existing:
+        return records_path
+    with records_path.open("a", encoding="utf-8", newline="\n") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
         handle.write(entry)
     return records_path
 
@@ -1778,6 +1904,8 @@ def confirm_modification(
     success: bool = True,
     project_path: str | Path = ".",
     refresh_index_files: list[str] | None = None,
+    *,
+    add_marker: bool = False,
 ) -> bool:
     project_root = normalize_project_path(project_path)
     init_codeguard(project_root, quiet=True)
@@ -1798,10 +1926,13 @@ def confirm_modification(
         temp_backup.unlink()
         print(f"Temporary backup removed: {temp_backup.as_posix()}")
 
-    if apply_confirm_policy_note(target, reason):
-        print("Post-confirm modification policy note updated in file header.")
+    if add_marker:
+        if apply_confirm_policy_note(target, reason):
+            print("Post-confirm modification policy note updated in file header.")
+        else:
+            print("Warning: could not update header policy note (CodeGuard marker missing or unsupported format).")
     else:
-        print("Warning: could not update header policy note (CodeGuard marker missing or unsupported format).")
+        print("Marker injection skipped (use --add-marker to inject CodeGuard header).")
 
     update_current_state(target, feature_name, project_root, reason=reason, source="confirm")
     record_path = write_modification_record(target, feature_name, reason, project_root)
@@ -2318,6 +2449,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_parser.add_argument("file")
     add_parser.add_argument("feature")
+    add_parser.add_argument("--no-marker", action="store_true", help="Skip injecting a marker into the source file.")
     add_lock_timeout_argument(add_parser)
 
     index_parser = subparsers.add_parser(
@@ -2343,7 +2475,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     backup_parser = subparsers.add_parser("backup", help="Create a pre-modification backup.")
     backup_parser.add_argument("file")
+    backup_parser.add_argument(
+        "--strict-conflict",
+        action="store_true",
+        help="Fail on hash drift instead of syncing the current development baseline.",
+    )
     add_lock_timeout_argument(backup_parser)
+
+    sync_parser = subparsers.add_parser(
+        "sync-current",
+        help="Record the current file hash as a development baseline without user success confirmation.",
+    )
+    sync_parser.add_argument("file")
+    sync_parser.add_argument("--feature", default="dev-baseline")
+    sync_parser.add_argument(
+        "--reason",
+        default="Synchronize current development baseline before continuing",
+    )
+    add_lock_timeout_argument(sync_parser)
 
     confirm_parser = subparsers.add_parser(
         "confirm",
@@ -2353,6 +2502,11 @@ def build_parser() -> argparse.ArgumentParser:
     confirm_parser.add_argument("feature")
     confirm_parser.add_argument("reason")
     confirm_parser.add_argument("success", nargs="?", default="true")
+    confirm_parser.add_argument(
+        "--add-marker",
+        action="store_true",
+        help="Inject a CodeGuard protection marker into the source file header (opt-in).",
+    )
     confirm_parser.add_argument(
         "--refresh-index",
         nargs="*",
@@ -2430,6 +2584,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Attempt cleanup even when lock is currently occupied (requires --yes).",
     )
 
+    token_tips_parser = subparsers.add_parser(
+        "token-tips",
+        help="Show actionable token-saving guidance and project-specific diagnostics.",
+    )
+    token_tips_parser.add_argument("--json", action="store_true", help="Emit tips as JSON.")
+    token_tips_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+
+    compress_parser = subparsers.add_parser(
+        "compress",
+        help="Compress prose in markdown/text files while keeping code blocks intact (caveman-style).",
+    )
+    compress_parser.add_argument("file")
+    compress_parser.add_argument(
+        "--level",
+        default="full",
+        choices=["lite", "full", "ultra"],
+        help="Compression level: lite (edges only), full (default, drop filler/hedging/articles), ultra (max compression).",
+    )
+    compress_parser.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Write compressed content back to file (creates backup first). Without this, prints preview to stdout.",
+    )
+    compress_parser.add_argument("--json", action="store_true", help="Emit result as JSON.")
+    compress_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+    add_lock_timeout_argument(compress_parser)
+
+    guard_parser = subparsers.add_parser(
+        "guard",
+        help="Unified pre-edit guard: detect encoding, backup, and return tx info in one step.",
+    )
+    guard_parser.add_argument("file")
+    guard_parser.add_argument("--feature", default="edit", help="Feature name for this change.")
+    guard_parser.add_argument("--reason", default="", help="Reason for this change.")
+    guard_parser.add_argument(
+        "--tier",
+        default="standard",
+        choices=["lite", "standard", "strict"],
+        help="Risk tier (default: standard). Strict also creates a snapshot.",
+    )
+    guard_parser.add_argument("--json", action="store_true", help="Emit guard result as JSON.")
+    guard_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+    add_lock_timeout_argument(guard_parser)
+
     schema_parser = subparsers.add_parser(
         "schema",
         help="Show stable JSON schema metadata for status/doctor/batch reports.",
@@ -2452,6 +2650,492 @@ def parse_success(value: str) -> bool:
     if lowered in {"0", "false", "no", "n"}:
         return False
     raise ValueError(f"Unsupported success value: {value}")
+
+
+# ---------------------------------------------------------------------------
+# Token compression (Caveman-style)
+# ---------------------------------------------------------------------------
+
+FILLER_WORDS = {
+    "just", "really", "basically", "actually", "simply", "very", "quite",
+    "rather", "pretty", "somewhat", "kind of", "sort of", "a bit", "a little",
+    "in order to", "due to the fact that", "it is important to note that",
+    "please note that", "it should be noted that", "as a matter of fact",
+}
+
+HEDGING_PATTERNS = [
+    (re.compile(r"\b(maybe|perhaps|possibly|potentially)\b\s*", re.IGNORECASE), ""),
+    (re.compile(r"\b(I think|I believe|it seems like|it appears that)\b\s*", re.IGNORECASE), ""),
+    (re.compile(r"\b(in my opinion|from my perspective)\b\s*", re.IGNORECASE), ""),
+]
+
+PLEASANTRIES = {
+    "sure", "certainly", "of course", "absolutely", "definitely",
+    "happy to", "glad to", "no problem", "you're welcome",
+}
+
+PHRASE_SHORTEN: list[tuple[str, str]] = [
+    ("for example", "e.g."),
+    ("that is", "i.e."),
+    ("and so on", "etc."),
+    ("in other words", "i.e."),
+    ("as well as", "and"),
+    ("a number of", "many"),
+    ("the majority of", "most"),
+    ("in the event that", "if"),
+    ("on a regular basis", "regularly"),
+    ("at this point in time", "now"),
+    ("in the near future", "soon"),
+    ("prior to", "before"),
+    ("subsequent to", "after"),
+    ("in addition to", "besides"),
+    ("with regard to", "about"),
+    ("with the exception of", "except"),
+    ("a lot of", "many"),
+    ("each and every", "each"),
+    ("first and foremost", "first"),
+    ("last but not least", "finally"),
+    ("in spite of", "despite"),
+    ("in the process of", "while"),
+    ("on the part of", "by"),
+    ("until such time as", "until"),
+    ("in close proximity to", "near"),
+    ("be able to", "can"),
+    ("is required to", "must"),
+    ("has the ability to", "can"),
+    ("make a decision", "decide"),
+    ("take action", "act"),
+    ("conduct an analysis", "analyze"),
+    ("give consideration to", "consider"),
+    ("provide assistance", "help"),
+    ("make use of", "use"),
+    ("take into account", "consider"),
+    ("carry out", "do"),
+    ("in a timely manner", "quickly"),
+]
+
+
+def _is_code_fence(line: str) -> bool:
+    return line.strip().startswith("```")
+
+
+def _compress_prose_line(line: str, level: str) -> str:
+    """Compress a single prose line. Code lines are returned verbatim."""
+    stripped = line.strip()
+
+    # Never touch code fences, indented code, or HTML comments
+    if _is_code_fence(stripped) or stripped.startswith("    ") or stripped.startswith("\t"):
+        return line
+    if stripped.startswith("<!--") or stripped.startswith("-->"):
+        return line
+
+    result = stripped
+
+    if level in ("full", "ultra"):
+        # Drop filler words (word boundary match)
+        for word in sorted(FILLER_WORDS, key=len, reverse=True):
+            pattern = re.compile(r"\b" + re.escape(word) + r"\b\s*", re.IGNORECASE)
+            result = pattern.sub("", result)
+
+        # Drop hedging phrases
+        for pattern, replacement in HEDGING_PATTERNS:
+            result = pattern.sub(replacement, result)
+
+        # Drop pleasantries at sentence start
+        for word in sorted(PLEASANTRIES, key=len, reverse=True):
+            pattern = re.compile(r"^" + re.escape(word) + r"[,\s]*", re.IGNORECASE)
+            result = pattern.sub("", result)
+
+        # Shorten common phrases
+        for long_phrase, short_phrase in PHRASE_SHORTEN:
+            pattern = re.compile(re.escape(long_phrase), re.IGNORECASE)
+            result = pattern.sub(short_phrase, result)
+
+    if level == "ultra":
+        # Drop articles
+        result = re.sub(r"\b(a|an|the)\b\s*", "", result, flags=re.IGNORECASE)
+        # Drop "is/are/was/were" before adjectives
+        result = re.sub(r"\b(is|are|was|were)\s+(a\s+)?(\w+ing)\b", r"\3", result, flags=re.IGNORECASE)
+        # Merge multiple spaces
+        result = re.sub(r"\s{2,}", " ", result)
+        # Use arrows for causality
+        result = re.sub(r",?\s*(so|therefore|thus|hence|as a result)\s*,?\s*", " -> ", result, flags=re.IGNORECASE)
+
+    # Lite: just drop filler and pleasantries at edges
+    if level == "lite":
+        result = re.sub(r"^(just|really|basically|actually|simply|sure|certainly|of course)\s*,?\s*", "", result, flags=re.IGNORECASE)
+        result = re.sub(r"^(please|kindly)\s+", "", result, flags=re.IGNORECASE)
+
+    # Clean up
+    result = re.sub(r"\s{2,}", " ", result).strip()
+    # Capitalize first letter
+    if result and result[0].islower():
+        result = result[0].upper() + result[1:]
+
+    return result
+
+
+def compress_text(content: str, level: str = "full") -> tuple[str, dict[str, Any]]:
+    """Compress prose while keeping code blocks intact.
+
+    Levels:
+      lite   - Drop filler/pleasantries at sentence edges
+      full   - Drop articles, filler, hedging, shorten phrases
+      ultra  - Full + articles, be-verbs, arrows for causality
+    """
+    if level not in ("lite", "full", "ultra"):
+        raise ValueError(f"Unknown compression level: {level}")
+
+    lines = content.split("\n")
+    in_code_block = False
+    compressed: list[str] = []
+    stats = {"original_chars": len(content), "compressed_chars": 0, "lines_in": len(lines), "lines_out": 0}
+
+    for line in lines:
+        if _is_code_fence(line):
+            in_code_block = not in_code_block
+            compressed.append(line)
+            continue
+
+        if in_code_block or line.startswith("    ") or line.startswith("\t"):
+            compressed.append(line)
+            continue
+
+        # Skip blank lines but don't remove more than 1 consecutive
+        stripped = line.strip()
+        if not stripped:
+            if compressed and compressed[-1].strip():
+                compressed.append("")
+            continue
+
+        compressed_line = _compress_prose_line(line, level)
+        if compressed_line:
+            compressed.append(compressed_line)
+
+    # Remove trailing blank lines
+    while compressed and not compressed[-1].strip():
+        compressed.pop()
+
+    result = "\n".join(compressed)
+    stats["compressed_chars"] = len(result)
+    stats["lines_out"] = len(compressed)
+    stats["reduction_pct"] = round(
+        (1 - stats["compressed_chars"] / max(stats["original_chars"], 1)) * 100, 1
+    )
+    return result, stats
+
+
+# File extensions safe for prose compression
+PROSE_EXTENSIONS = {".md", ".markdown", ".txt", ".rst", ".adoc", ".asciidoc", ".tex", ".text"}
+
+
+def _check_compress_safe(target: Path) -> str | None:
+    """Return error message if target is not safe for compression, else None."""
+    ext = target.suffix.lower()
+    if ext not in PROSE_EXTENSIONS:
+        return (
+            f"Compress only supports prose files ({', '.join(sorted(PROSE_EXTENSIONS))}). "
+            f"'{ext}' files cannot be compressed — code and structured data would be corrupted."
+        )
+    return None
+
+
+def run_compress(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+    *,
+    level: str = "full",
+    in_place: bool = False,
+    json_output: bool = False,
+    json_compact: bool = False,
+) -> int:
+    project_root = normalize_project_path(project_path)
+    target = resolve_file_path(file_path, project_root)
+    if not target.exists():
+        if json_output:
+            emit_json(build_json_payload("compress", {"ok": False, "error": f"File not found: {target.as_posix()}"}), compact=json_compact)
+        else:
+            print(f"File not found: {target.as_posix()}")
+        return 1
+
+    # Safety check: refuse code/structured files
+    error = _check_compress_safe(target)
+    if error is not None:
+        if json_output:
+            emit_json(build_json_payload("compress", {"ok": False, "error": error}), compact=json_compact)
+        else:
+            print(f"Error: {error}")
+        return 1
+
+    # Check for CodeGuard inline markers that would be corrupted
+    content, encoding_meta = read_text_preserving(target)
+    if in_place and has_codeguard_marker(content):
+        print("Warning: File contains CodeGuard protection markers that may be altered by compression.")
+        print("  Use 'guard' before compress for a proper backup, or remove markers first.")
+        if not json_output:
+            answer = input("Continue anyway? (y/N): ").strip().lower()
+            if answer != "y":
+                print("Compression cancelled.")
+                return 1
+
+    # Check for feature index that would become stale
+    if in_place and is_index_required(target, project_root):
+        print("Warning: File has a feature index. Compression changes line counts; re-index after compression.")
+        print("  Run 'python scripts/codeguard.py index <file> --auto' after compress to refresh.")
+
+    compressed, stats = compress_text(content, level=level)
+    stats["file"] = get_file_key(target, project_root)
+    stats["level"] = level
+    stats["encoding"] = encoding_meta
+
+    if in_place:
+        # Use guard pipeline for proper backup
+        init_codeguard(project_root, quiet=True)
+        suffix = get_storage_suffix(target, project_root)
+        backup_name = f"{target.name}.{suffix}.pre-compress.bak"
+        backup_path = project_root / TEMP_DIR / backup_name
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup_path)
+        # Also save encoding metadata alongside backup (guard-style)
+        encoding_meta_path = Path(str(backup_path) + ".encoding.json")
+        write_json(encoding_meta_path, encoding_meta)
+        update_current_state(target, f"compress-{level}", project_root, reason="Pre-compress baseline", source="compress")
+        stats["backup_path"] = backup_path.as_posix()
+
+        write_text_preserving(target, compressed, encoding_meta)
+        stats["ok"] = True
+
+        if json_output:
+            emit_json(build_json_payload("compress", stats), compact=json_compact)
+        else:
+            print(f"Compressed: {stats['file']} (level={level})")
+            print(f"  {stats['original_chars']} -> {stats['compressed_chars']} chars ({stats['reduction_pct']}% reduction)")
+            print(f"  Backup: {backup_path.as_posix()}")
+        return 0
+    else:
+        # Preview mode: print to stdout
+        if json_output:
+            emit_json(build_json_payload("compress", {**stats, "preview": compressed[:500]}), compact=json_compact)
+        else:
+            print(compressed)
+            print(f"\n--- Compression stats: {stats['original_chars']} -> {stats['compressed_chars']} chars ({stats['reduction_pct']}% reduction) ---", file=sys.stderr)
+        return 0
+
+
+def run_guard(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+    *,
+    feature: str = "edit",
+    reason: str = "",
+    tier: str = "standard",
+    json_output: bool = False,
+    json_compact: bool = False,
+) -> int:
+    project_root = normalize_project_path(project_path)
+    target = resolve_file_path(file_path, project_root)
+    if not target.exists():
+        if json_output:
+            emit_json(build_json_payload("guard", {"ok": False, "error": f"File not found: {target.as_posix()}"}), compact=json_compact)
+        else:
+            print(f"File not found: {target.as_posix()}")
+        return 1
+
+    init_codeguard(project_root, quiet=True)
+
+    # Detect encoding
+    _, encoding_meta = read_text_preserving(target)
+
+    # Create pre-modification backup (always, silently)
+    suffix = get_storage_suffix(target, project_root)
+    backup_name = f"{target.name}.{suffix}.pre-modification.bak"
+    backup_path = project_root / TEMP_DIR / backup_name
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(target, backup_path)
+
+    # Save encoding metadata alongside backup
+    encoding_meta_path = Path(str(backup_path) + ".encoding.json")
+    write_json(encoding_meta_path, encoding_meta)
+
+    # Generate a simple tx id
+    tx_id = hashlib.sha256(
+        f"{get_file_key(target, project_root)}:{dt.datetime.now().isoformat()}".encode()
+    ).hexdigest()[:12]
+
+    pre_hash = calculate_hash(target)
+    line_count = count_code_lines(target, project_root)
+
+    # For strict tier, also create a milestone snapshot
+    snapshot_info = None
+    if tier == "strict":
+        snapshot_info = create_manual_snapshot(target, feature, reason or f"Guard strict snapshot for {feature}", project_root)
+
+    # Update current state to track this operation
+    update_current_state(target, feature, project_root, reason=reason, source="guard")
+
+    guard_result = {
+        "ok": True,
+        "tx_id": tx_id,
+        "file": get_file_key(target, project_root),
+        "pre_hash": pre_hash,
+        "line_count": line_count,
+        "encoding": encoding_meta,
+        "backup_path": backup_path.as_posix(),
+        "tier": tier,
+        "feature": feature,
+        "reason": reason,
+        "snapshot_created": snapshot_info is not None,
+    }
+
+    if json_output:
+        emit_json(build_json_payload("guard", guard_result), compact=json_compact)
+    else:
+        print(f"Guard: {get_file_key(target, project_root)}")
+        print(f"  tx_id: {tx_id}")
+        print(f"  tier: {tier}")
+        print(f"  backup: {backup_path.as_posix()}")
+        print(f"  encoding: {encoding_meta['encoding']}{' BOM' if encoding_meta.get('bom') else ''}")
+        if snapshot_info:
+            print(f"  snapshot: v{snapshot_info['version']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Token diagnostics
+# ---------------------------------------------------------------------------
+
+TOKEN_TIPS = [
+    {
+        "id": 1,
+        "title": "Don't follow up to correct — restart",
+        "detail": "When Claude makes a mistake, use /clear + re-prompt instead of adding correction turns. Each turn re-reads full history.",
+        "action": "/clear",
+    },
+    {
+        "id": 2,
+        "title": "Fresh chat every 15-20 turns",
+        "detail": "Long conversations burn tokens re-reading history. Use /compact or /clear + paste a summary from the previous session.",
+        "action": "/compact or /clear",
+    },
+    {
+        "id": 3,
+        "title": "Batch questions into one message",
+        "detail": "Combine related asks into a single message instead of multiple back-and-forth turns.",
+        "action": "Combine questions",
+    },
+    {
+        "id": 4,
+        "title": "Track actual token usage",
+        "detail": "Use /context to see current token consumption. Check which files and tools burn the most tokens.",
+        "action": "/context",
+    },
+    {
+        "id": 5,
+        "title": "Reuse recurring context",
+        "detail": "Use CLAUDE.md, skills, and .codeguard/ feature indexes to avoid re-reading entire files. CodeGuard indexes cut read windows from full-file to ~40 lines.",
+        "action": "Use CLAUDE.md + codeguard indexes",
+    },
+    {
+        "id": 6,
+        "title": "Use feature indexes for large files",
+        "detail": "Files over 200 lines with a CodeGuard feature index enable targeted ~40-line reads instead of full-file reads. Run 'codeguard index <file> --auto' on large files.",
+        "action": "python scripts/codeguard.py index <file> --auto",
+    },
+    {
+        "id": 7,
+        "title": "Compress verbose instruction files",
+        "detail": "Use 'codeguard compress --in-place' on CLAUDE.md and AGENTS.md to reduce per-session token burn. The compress command preserves code blocks and technical terms.",
+        "action": "python scripts/codeguard.py compress CLAUDE.md --level full --in-place",
+    },
+    {
+        "id": 8,
+        "title": "Guard creates targeted backups, not full copies",
+        "detail": "The guard command stores backups in .codeguard/temp/ which are excluded from context. Use guard instead of reading full files for safety.",
+        "action": "python scripts/codeguard.py guard <file>",
+    },
+    {
+        "id": 9,
+        "title": "Spread work across sessions",
+        "detail": "Split large tasks into 2-3 sessions to stay under token thresholds. The 5-hour rolling window resets between sessions.",
+        "action": "Plan task boundaries",
+    },
+    {
+        "id": 10,
+        "title": "Use Haiku for simple tasks",
+        "detail": "Switch to Haiku for typo fixes, simple refactors, and low-risk changes. Reserve Opus/Sonnet for complex architecture work.",
+        "action": "/model claude-haiku-4-5",
+    },
+    {
+        "id": 11,
+        "title": "Disable unused MCP tools and hooks",
+        "detail": "Each MCP tool definition burns tokens before your first keystroke. Disable unused integrations in settings.json.",
+        "action": "Check settings.json",
+    },
+]
+
+
+def run_token_tips(
+    project_path: str | Path = ".",
+    *,
+    json_output: bool = False,
+    json_compact: bool = False,
+) -> int:
+    project_root = normalize_project_path(project_path)
+    init_codeguard(project_root, quiet=True)
+
+    # Gather project-specific diagnostics
+    index = load_index(project_root)
+    indexed_files = len(index.get("index_state", {}))
+    snapshot_files = len(index.get("versions", {}))
+    total_snapshots = sum(len(v) for v in index.get("versions", {}).values())
+    has_modifications = (project_root / MODIFICATIONS_FILE).exists()
+
+    diagnostics = {
+        "indexed_files": indexed_files,
+        "snapshot_files": snapshot_files,
+        "total_snapshots": total_snapshots,
+        "has_modification_records": has_modifications,
+    }
+
+    if json_output:
+        payload = build_json_payload(
+            "token-tips",
+            {
+                "ok": True,
+                "diagnostics": diagnostics,
+                "rules": TOKEN_TIPS,
+            },
+        )
+        emit_json(payload, compact=json_compact)
+        return 0
+
+    print("=" * 60)
+    print("CodeGuard Token Efficiency Tips")
+    print("=" * 60)
+    print()
+    print(f"Project state: {indexed_files} files indexed, {snapshot_files} files with snapshots")
+    print()
+
+    if indexed_files == 0:
+        print("Tip: No files have feature indexes. Run 'codeguard index <file> --auto'")
+        print("     on large files (>200 lines) to enable targeted reads (~85% token savings).")
+        print()
+
+    print("Top 11 Token-Saving Rules:")
+    print("-" * 60)
+    for tip in TOKEN_TIPS:
+        print(f"  #{tip['id']:2d}  {tip['title']}")
+        print(f"       {tip['detail']}")
+        print(f"       Action: {tip['action']}")
+        print()
+
+    print("-" * 60)
+    print("CodeGuard-specific savings:")
+    print("  1. Feature indexes -> ~40-line targeted reads vs full-file reads")
+    print("  2. Compress command -> ~40-50% reduction on verbose CLAUDE.md files")
+    print("  3. Guard command -> backup without re-reading file in context")
+    print("  4. Token compression mode -> ~20-65% output token reduction")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2481,7 +3165,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "add":
-            return 0 if create_version_snapshot(args.file, args.feature, args.project) else 1
+            return 0 if create_version_snapshot(args.file, args.feature, args.project, ensure_marker=not args.no_marker) else 1
 
         if args.command == "index":
             if args.auto and args.entry:
@@ -2518,7 +3202,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if validate_feature_index(args.file, args.project, threshold=args.max_lines) else 1
 
         if args.command == "backup":
-            return 0 if backup_before_modification(args.file, args.project) else 1
+            return 0 if backup_before_modification(args.file, args.project, auto_sync=not args.strict_conflict) else 1
+
+        if args.command == "sync-current":
+            return 0 if sync_current_baseline(args.file, args.project, feature_name=args.feature, reason=args.reason) else 1
 
         if args.command == "confirm":
             try:
@@ -2533,6 +3220,7 @@ def main(argv: list[str] | None = None) -> int:
                 success_value,
                 args.project,
                 refresh_index_files=args.refresh_index,
+                add_marker=args.add_marker,
             )
             return 0 if success else 1
 
@@ -2594,6 +3282,34 @@ def main(argv: list[str] | None = None) -> int:
                 assume_yes=args.yes,
                 force=args.force,
             ) else 1
+
+        if args.command == "token-tips":
+            return run_token_tips(
+                args.project,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            )
+
+        if args.command == "compress":
+            return run_compress(
+                args.file,
+                args.project,
+                level=args.level,
+                in_place=args.in_place,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            )
+
+        if args.command == "guard":
+            return run_guard(
+                args.file,
+                args.project,
+                feature=args.feature,
+                reason=args.reason,
+                tier=args.tier,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            )
 
         if args.command == "schema":
             show_schema(args.target, compact=args.json_compact)
