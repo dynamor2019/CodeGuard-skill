@@ -1,12 +1,12 @@
 # [CodeGuard Feature Index]
 # - get_comment_format -> line 99
 # - release_handle_lock -> line 342
-# - get_storage_suffix -> line 637
-# - has_protection_marker -> line 835
-# - get_feature_index -> line 1147
-# - create_snapshot_record -> line 1584
-# - refresh_feature_indexes -> line 2023
-# - main -> line 3098
+# - next_version -> line 642
+# - render_marker -> line 839
+# - is_index_required -> line 1168
+# - create_manual_snapshot -> line 1678
+# - show_status -> line 2194
+# - main -> line 3294
 # [/CodeGuard Feature Index]
 
 #!/usr/bin/env python3
@@ -1859,6 +1859,118 @@ def get_temp_backup_path(file_path: str | Path, project_path: str | Path = ".") 
     return project_root / TEMP_DIR / f"{target.name}.{suffix}.pre-modification.bak"
 
 
+def find_all_temp_backups(file_path: str | Path, project_path: str | Path = ".") -> list[Path]:
+    """Find all temp backups for a file, sorted by modification time (newest first)."""
+    project_root = normalize_project_path(project_path)
+    target = resolve_file_path(file_path, project_root)
+    suffix = get_storage_suffix(target, project_root)
+    temp_dir = project_root / TEMP_DIR
+    if not temp_dir.exists():
+        return []
+    pattern = f"{target.name}.{suffix}.*.bak"
+    backups = sorted(temp_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    return backups
+
+
+def run_undo(
+    file_path: str | Path,
+    project_path: str | Path = ".",
+    *,
+    assume_yes: bool = False,
+    list_only: bool = False,
+    json_output: bool = False,
+    json_compact: bool = False,
+) -> int:
+    """Restore file from the most recent temp backup (guard backup)."""
+    project_root = normalize_project_path(project_path)
+    target = resolve_file_path(file_path, project_root)
+
+    if not target.exists():
+        msg = f"File not found: {target.as_posix()}"
+        if json_output:
+            emit_json(build_json_payload("undo", {"ok": False, "error": msg}), compact=json_compact)
+        else:
+            print(msg)
+        return 1
+
+    backups = find_all_temp_backups(target, project_root)
+
+    if list_only:
+        if json_output:
+            backup_list = [
+                {
+                    "path": b.as_posix(),
+                    "mtime": dt.datetime.fromtimestamp(b.stat().st_mtime).isoformat(timespec="seconds"),
+                    "size": b.stat().st_size,
+                    "type": "pre-modification" if "pre-modification" in b.name else ("pre-compress" if "pre-compress" in b.name else "sync-current"),
+                }
+                for b in backups
+            ]
+            emit_json(build_json_payload("undo", {"ok": True, "file": get_file_key(target, project_root), "backups": backup_list}), compact=json_compact)
+        else:
+            print(f"Available undo points for: {get_file_key(target, project_root)}")
+            if not backups:
+                print("  (none — run 'guard <file>' first to create a backup)")
+            for b in backups:
+                mtime = dt.datetime.fromtimestamp(b.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                btype = "guard" if "pre-modification" in b.name else ("compress" if "pre-compress" in b.name else "sync")
+                print(f"  [{btype}] {b.name} ({mtime})")
+        return 0
+
+    if not backups:
+        msg = "No temp backup found. Run 'guard <file>' first to create a pre-edit backup."
+        if json_output:
+            emit_json(build_json_payload("undo", {"ok": False, "error": msg}), compact=json_compact)
+        else:
+            print(msg)
+        return 1
+
+    # Use the most recent backup
+    backup_path = backups[0]
+    backup_mtime = dt.datetime.fromtimestamp(backup_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+    if not assume_yes:
+        print(f"Undo will restore: {get_file_key(target, project_root)}")
+        print(f"  From backup: {backup_path.name} ({backup_mtime})")
+        print(f"  Current file will be saved as .rollback-backup before restoring.")
+        answer = input("Confirm undo? (y/N): ").strip().lower()
+        if answer != "y":
+            print("Undo cancelled.")
+            return 1
+
+    # Safety: backup current file before restoring
+    safety_backup = (
+        target.parent
+        / f"{target.name}.undo-backup.{dt.datetime.now().strftime('%Y%m%d%H%M%S')}.bak"
+    )
+    shutil.copy2(target, safety_backup)
+
+    # Restore from temp backup
+    shutil.copy2(backup_path, target)
+
+    # Clean up the used backup
+    backup_path.unlink()
+    # Also clean up the encoding metadata file if present
+    encoding_meta_path = Path(str(backup_path) + ".encoding.json")
+    if encoding_meta_path.exists():
+        encoding_meta_path.unlink()
+
+    if json_output:
+        emit_json(build_json_payload("undo", {
+            "ok": True,
+            "file": get_file_key(target, project_root),
+            "restored_from": backup_path.name,
+            "backup_mtime": backup_mtime,
+            "safety_backup": safety_backup.as_posix(),
+        }), compact=json_compact)
+    else:
+        print(f"Undo successful: {get_file_key(target, project_root)}")
+        print(f"  Restored from: {backup_path.name} ({backup_mtime})")
+        print(f"  Pre-undo state saved to: {safety_backup.as_posix()}")
+        print(f"  Tip: if undo was a mistake, restore from {safety_backup.name}")
+    return 0
+
+
 def write_modification_record(
     file_path: str | Path,
     feature_name: str,
@@ -2584,6 +2696,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Attempt cleanup even when lock is currently occupied (requires --yes).",
     )
 
+    undo_parser = subparsers.add_parser(
+        "undo",
+        help="Restore a file from the most recent guard/compress temp backup. Quick one-step undo.",
+    )
+    undo_parser.add_argument("file")
+    undo_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt.")
+    undo_parser.add_argument("--list", action="store_true", help="List available undo points instead of restoring.")
+    undo_parser.add_argument("--json", action="store_true", help="Emit result as JSON.")
+    undo_parser.add_argument("--json-compact", action="store_true", help="Emit compact single-line JSON.")
+    add_lock_timeout_argument(undo_parser)
+
     token_tips_parser = subparsers.add_parser(
         "token-tips",
         help="Show actionable token-saving guidance and project-specific diagnostics.",
@@ -2965,6 +3088,24 @@ def run_guard(
     pre_hash = calculate_hash(target)
     line_count = count_code_lines(target, project_root)
 
+    # Check feature index status for large files
+    index_info: dict[str, Any] | None = None
+    if line_count > DEFAULT_INDEX_THRESHOLD:
+        index_entries = get_feature_index(target, project_root)
+        index_valid = validate_feature_index(target, project_root, quiet=True)
+        index_info = {
+            "required": True,
+            "has_index": len(index_entries) > 0,
+            "index_valid": index_valid,
+            "entry_count": len(index_entries),
+            "entries": [{"feature": label, "line": ln} for label, ln in index_entries],
+            "action": (
+                "use-index"
+                if index_valid and index_entries
+                else "generate-index"
+            ),
+        }
+
     # For strict tier, also create a milestone snapshot
     snapshot_info = None
     if tier == "strict":
@@ -2986,6 +3127,8 @@ def run_guard(
         "reason": reason,
         "snapshot_created": snapshot_info is not None,
     }
+    if index_info is not None:
+        guard_result["index"] = index_info
 
     if json_output:
         emit_json(build_json_payload("guard", guard_result), compact=json_compact)
@@ -2997,6 +3140,16 @@ def run_guard(
         print(f"  encoding: {encoding_meta['encoding']}{' BOM' if encoding_meta.get('bom') else ''}")
         if snapshot_info:
             print(f"  snapshot: v{snapshot_info['version']}")
+        if index_info is not None:
+            if index_info["has_index"] and index_info["index_valid"]:
+                entries_preview = ", ".join(
+                    f"{e['feature']}->L{e['line']}" for e in index_info["entries"][:5]
+                )
+                print(f"  index: {index_info['entry_count']} entries ({entries_preview}...)")
+                print(f"  tip: Use show-index to navigate; target ~40-line reads at feature boundaries.")
+            else:
+                print(f"  index: MISSING ({line_count} lines, {DEFAULT_INDEX_THRESHOLD}+ requires index)")
+                print(f"  tip: Run 'python scripts/codeguard.py index <file> --auto' for efficient targeted editing.")
     return 0
 
 
@@ -3282,6 +3435,16 @@ def main(argv: list[str] | None = None) -> int:
                 assume_yes=args.yes,
                 force=args.force,
             ) else 1
+
+        if args.command == "undo":
+            return run_undo(
+                args.file,
+                args.project,
+                assume_yes=args.yes,
+                list_only=args.list,
+                json_output=args.json,
+                json_compact=args.json_compact,
+            )
 
         if args.command == "token-tips":
             return run_token_tips(

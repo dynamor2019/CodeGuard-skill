@@ -35,6 +35,7 @@
 - Milestone snapshot: `codeguard snapshot <file> "<feature>" "<reason>"`
 
 ### 2.2 Recovery Commands
+- Quick undo: `codeguard undo <file> [--yes] [--list]`
 - Health check: `codeguard doctor [--repair]`
 - File status: `codeguard status <file> [--json]`
 - Lock diagnosis: `codeguard lock-status [--json]`

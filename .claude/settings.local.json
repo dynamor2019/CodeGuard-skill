@@ -18,7 +18,26 @@
       "Bash(python scripts/codeguard.py compress SKILL.md --level full)",
       "Bash(python scripts/codeguard.py token-tips)",
       "Bash(python scripts/codeguard.py compress scripts/codeguard.py --level full)",
-      "Bash(python scripts/codeguard.py compress /tmp/test.txt --level full)"
+      "Bash(python scripts/codeguard.py compress /tmp/test.txt --level full)",
+      "Bash(python scripts/codeguard.py --help)",
+      "Bash(python scripts/codeguard.py guard /tmp/vibe-test.py --feature \"test\" --reason \"test\" --json-compact)",
+      "Bash(python scripts/codeguard.py rollback /tmp/vibe-test.py --version 1 --yes)",
+      "Read(//tmp/**)",
+      "Bash(rm -f /tmp/vibe-test.py .codeguard/temp/vibe* .codeguard/versions/vibe*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('scripts/codeguard.py', doraise=True\\); print\\('Syntax OK'\\)\")",
+      "Bash(echo \"original content\")",
+      "Bash(python scripts/codeguard.py guard /tmp/undo-test.py --feature \"test-undo\" --reason \"test\" --json-compact)",
+      "Bash(echo \"broken content - AI messed up!\")",
+      "Bash(python scripts/codeguard.py undo /tmp/undo-test.py --list)",
+      "Bash(python scripts/codeguard.py undo /tmp/undo-test.py --yes)",
+      "Bash(python scripts/codeguard.py guard scripts/codeguard.py)",
+      "Bash(python scripts/codeguard.py guard AGENTS.md)",
+      "Bash(python scripts/codeguard.py guard /tmp/final-test.py)",
+      "Bash(python scripts/codeguard.py undo /tmp/final-test.py --yes)",
+      "Bash(rm -f /tmp/final-test.py*)",
+      "Bash(rm -f .codeguard/temp/*.bak .codeguard/temp/*.json .codeguard/versions/*.bak)",
+      "Bash(python scripts/codeguard.py index scripts/codeguard.py --auto --quiet)",
+      "Bash(python scripts/codeguard.py index scripts/codeguard.py --auto)"
     ]
   }
 }

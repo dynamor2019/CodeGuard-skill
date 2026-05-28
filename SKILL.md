@@ -17,33 +17,45 @@ The backup is invisible — it just works, and you only interact with it when yo
 
 1. **Run `guard` before editing important or complex files.** It creates a pre-edit backup and detects encoding. For trivial typo fixes, skipping is fine — the risk is low.
 2. **Never inject markers or comments into source files by default.** All metadata lives in `.codeguard/`. Explicit marker injection is opt-in: use `add` (without `--no-marker`) or `confirm --add-marker`.
-3. **The feature index is a navigation aid, not a gate.** Use it when available to read efficiently. Never block an edit because an index is missing or stale.
+3. **For files over 200 lines, use the feature index as the primary navigation tool.** Target the specific feature section (~40 lines around the indexed line) instead of reading the entire file. If an index is missing, generate one — it's the key to token-efficient editing on large files.
 4. **Hash drift during development is normal.** Sync the baseline silently and continue — it's not a failure.
 5. **Use `confirm` only for explicit milestones.** Not every edit needs confirmation. A backup is enough for routine work.
 6. **Lock contention must resolve fast.** Default timeout is under 1 second. Diagnose stale locks quickly, never stall workflows.
 
 ## Daily Workflow
 
-This is the only workflow you need 95% of the time:
+This is the standard workflow for every edit:
 
 ```
-# Step 1: Guard the file (creates backup, detects encoding)
-python scripts/codeguard.py guard <file> --feature "<what>" --reason "<why>"
+# Step 1: Guard the file (backup + encoding detection + index status)
+python scripts/codeguard.py guard <file>
 
-# Step 2: Edit the file
+# Step 2: If file is >200 lines, check the index
+#   - guard says "index: 8 entries" → use show-index to navigate
+#   - guard says "index: MISSING" → generate one:
+python scripts/codeguard.py index <file> --auto
 
-# Step 3: Done. The backup is in .codeguard/temp/ if you need to rollback.
+# Step 3: Read only the target section (~40 lines around the feature line)
+# Step 4: Apply the minimal edit
+
+# Step 5: If things went wrong → undo
+python scripts/codeguard.py undo <file>
+
+# Step 6: Done. Backup is in .codeguard/temp/ if needed later.
 ```
-
-For simple typo fixes and small changes, you can skip the guard and just edit — the risk is low. But if you're a beginner or touching important code, always guard first.
 
 ## When Things Go Wrong
 
 ```
+# Quick undo: restore from the most recent guard backup
+python scripts/codeguard.py undo <file>
+python scripts/codeguard.py undo <file> --list    # see all undo points
+python scripts/codeguard.py undo <file> --yes     # skip confirmation
+
 # Quick health check on a file
 python scripts/codeguard.py status <file>
 
-# List available versions
+# List available snapshot versions
 python scripts/codeguard.py list <file>
 
 # Rollback to a specific snapshot
@@ -72,30 +84,38 @@ python scripts/codeguard.py guard <file> --feature "<name>" --reason "<why>" --t
 python scripts/codeguard.py confirm <file> "<name>" "<reason>" true
 ```
 
-## Feature Index (Optional Helper)
+## Feature Index (Large File Navigation)
 
-For files over 200 lines, a feature index helps with efficient navigation. Auto-generation produces up to 8 entries sampled across the file; use `--entry "Label:42"` for manual precision.
+**Files over 200 lines MUST have a feature index for efficient editing.** The index maps key functions/sections to line numbers, enabling ~40-line targeted reads instead of reading the entire file. Without an index, every edit on a large file burns tokens reading code that isn't relevant to the change.
+
+The `guard` command reports index status for files over 200 lines:
+- `index: 8 entries` — use `show-index` to navigate, target ~40-line reads
+- `index: MISSING` — run `index --auto` before editing
 
 ```
-# Auto-generate an index (up to 8 entries)
+# Auto-generate an index (up to 8 entries, sampled across the file)
 python scripts/codeguard.py index <file> --auto
 
-# Manual entries for precision
+# Manual entries for precision (recommended for critical files)
 python scripts/codeguard.py index <file> --entry "Request parsing:42" --entry "Auth flow:156"
 
-# Show current index
+# Show current index for navigation
 python scripts/codeguard.py show-index <file>
 
-# Validate index health
+# Check if index is stale (hash changed since last index update)
 python scripts/codeguard.py validate-index <file>
 ```
 
-The index is NEVER a prerequisite for editing. It's a navigation aid that helps you:
-- Jump to the right part of a large file quickly (the index block shows key line numbers)
-- Use targeted reads instead of full-file reads (saves tokens)
-- Detect when the index is stale relative to the file
+### How to Use the Index When Editing
 
-If an index is missing or outdated for a large file you're about to edit, generate it if you want better navigation. Skip it if you know exactly where to edit.
+When `guard` reports an index is available:
+
+1. **First read**: `show-index` to see the feature map, then read only the relevant section (~40 lines around the target line number).
+2. **If the edit crosses feature boundaries**: expand to ~120 lines spanning both features.
+3. **If you need context from another file**: read one directly related dependency.
+4. **After editing**: refresh the index if line numbers shifted.
+
+This cuts token consumption on large files by ~85% compared to full-file reads.
 
 ## Lock Model
 
@@ -214,6 +234,8 @@ Sidecar example (`config.json.codeguard-index.json`):
 | `python scripts/codeguard.py guard <file> --tier standard` | Standard guard: backup + encoding detection (default) |
 | `python scripts/codeguard.py guard <file> --tier strict` | Strict guard: backup + encoding + snapshot |
 | `python scripts/codeguard.py guard <file> --json` | Machine-readable guard output |
+| `python scripts/codeguard.py undo <file>` | Restore from most recent guard backup (quick undo) |
+| `python scripts/codeguard.py undo <file> --list` | List available undo points |
 | `python scripts/codeguard.py backup <file>` | Pre-modification backup (legacy, use guard instead) |
 | `python scripts/codeguard.py backup <file> --strict-conflict` | Fail on hash drift for release/security checks |
 | `python scripts/codeguard.py sync-current <file>` | Sync current file state as development baseline |
